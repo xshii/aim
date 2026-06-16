@@ -1,0 +1,25 @@
+# ============ 凭证/私钥：严禁入仓库（宪法 C-1 / D-009）============
+*.pem
+*.key
+*_key
+*_key.*
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+.ssh/
+*.p12
+*.pfx
+# 本地配置覆盖（含敏感信息时）
+*.local.ini
+secrets.ini
+.env
+
+# ============ 编译/运行产物 ============
+*.bin
+*.o
+*.out
+__pycache__/
+*.pyc
+/artifacts/
+/reports/

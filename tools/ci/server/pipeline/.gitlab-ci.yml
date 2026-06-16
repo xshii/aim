@@ -1,0 +1,57 @@
+# implements: FR-1, FR-2, FR-3, FR-6, FR-7
+# CI 流水线 — 验证预生成代码（不在 CI 内生成代码，D-008）。role=server（GitLab/Runner 运行时执行）。
+# 多种验证：运行 / 仿真 / 比对 / 质量检查（合并为 check.py <kind>），收集 output 与状态后聚合。
+# 运行型经 limited_run.py（超时+资源限制）；仿真严格串行（resource_group，D-003）。纯 python3 标准库。
+stages: [smoke, run_check, sim_check, compare_check, quality_check, report]
+
+variables:
+  LIMITED: "python3 tools/ci/server/harness/limited_run.py"
+
+# qsort 冒烟：编译+限制运行+比对，验证 CI 与限制运行链路真实可用
+smoke_qsort:
+  stage: smoke
+  tags: [sim-license]
+  script:
+    - python3 tools/ci/server/demo/qsort/smoke_qsort.py
+  artifacts: { paths: [artifacts/checks/], expire_in: 1 week }
+
+# 运行型验证：执行预生成代码，超时+资源限制
+run_check:
+  stage: run_check
+  tags: [sim-license]
+  script:
+    - $LIMITED "$CI_PROJECT_DIR" python3 tools/ci/server/harness/check.py run
+  artifacts: { paths: [artifacts/checks/], expire_in: 1 week }
+
+# 仿真型验证：喂仿真软件，严格串行（不进资源限制，需访问 License）
+sim_check:
+  stage: sim_check
+  tags: [sim-license]
+  resource_group: sim-license-lock     # 关键：仿真全局串行，不可删（C-3）
+  script:
+    - python3 tools/ci/server/harness/check.py sim
+  artifacts: { paths: [artifacts/checks/], expire_in: 1 week }
+
+# 比对型验证：与参考答案比对，不实际运行
+compare_check:
+  stage: compare_check
+  tags: [sim-license]
+  script:
+    - python3 tools/ci/server/harness/check.py compare
+  artifacts: { paths: [artifacts/checks/], expire_in: 1 week }
+
+# 质量检查：静态质量
+quality_check:
+  stage: quality_check
+  tags: [sim-license]
+  script:
+    - python3 tools/ci/server/harness/check.py quality
+  artifacts: { paths: [artifacts/checks/], expire_in: 1 week }
+
+# 聚合 output/状态 + 质量门禁（合并脚本）
+report:
+  stage: report
+  tags: [sim-license]
+  script:
+    - python3 tools/ci/server/metrics/report.py
+  artifacts: { paths: [reports/], expire_in: 1 month }

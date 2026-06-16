@@ -1,0 +1,17 @@
+# ============================================================
+# config.local.ini —— 本地敏感覆盖，【严禁入仓】（.gitignore 的 *.local.ini 已忽略）。
+# 复制为 config.local.ini 后填写。ci_config.load() 会自动叠加覆盖 config.ini。
+# 只放敏感项：代理明文密码、webhook 共享密钥、GitLab trigger token。
+# 等效环境变量优先于本文件：HTTP_PROXY/HTTPS_PROXY、WEBHOOK_SECRET、GITLAB_TRIGGER_TOKEN。
+# ============================================================
+
+[proxy]
+# 执行机本地下载依赖用（admin fetch=auto）。含明文密码，故只在此、不入仓。
+http_proxy = http://user:pass@proxy.corp:8080
+https_proxy = http://user:pass@proxy.corp:8080
+
+[secrets]
+# 内源 webhook 校验的共享密钥（与内源站 webhook 配置一致；等效 env WEBHOOK_SECRET）。
+webhook_secret = change-me
+# 触发 GitLab 流水线的 trigger token（GitLab 项目 → CI/CD → Pipeline trigger tokens）。
+gitlab_trigger_token =

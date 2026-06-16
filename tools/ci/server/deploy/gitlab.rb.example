@@ -1,0 +1,24 @@
+# gitlab.rb.example — GitLab CE 配置模板
+# implements: FR-10, FR-15
+# 复制相关片段到 /etc/gitlab/gitlab.rb，改完执行 gitlab-ctl reconfigure。
+# external_url 应与 config.ini（host + 探测锁定的 http_port）一致（单一事实源 C-7）。
+# 遵守宪法 C-1：禁用一切对外遥测。
+
+## ===== 访问地址：本机 IP + 探测锁定的端口（避开被占用端口）=====
+external_url 'http://10.0.0.10:8929'      # 与 deploy 组装的 external_url 一致
+
+## ===== 禁用对外遥测 / 外联（C-1，必须）=====
+gitlab_rails['usage_ping_enabled'] = false
+gitlab_rails['sentry_enabled'] = false
+# 另在管理后台 Settings -> Metrics 关闭 Version check。
+
+## ===== 内部私有策略 =====
+gitlab_rails['gitlab_signup_enabled'] = false
+gitlab_rails['gitlab_default_projects_features_visibility_level'] = 'private'
+
+## ===== 端口占用提示 =====
+# 若 80/443 被其他 CI 服务占用，external_url 用上面探测到的端口即可，
+# GitLab 的内置 nginx 会监听该端口。无需改其它服务。
+
+## ===== 备份目录 =====
+gitlab_rails['backup_path'] = '/var/opt/gitlab/backups'
