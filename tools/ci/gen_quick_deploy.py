@@ -120,7 +120,7 @@ def build_blocks(cfg):
              "python3 local/admin/deploy_remote.py push", None),
             ("A4", "一条龙：check → fetch → push → 远程跑 deploy.py all（含装 GitLab + 全自动 Runner）",
              "python3 local/admin/deploy_remote.py all",
-             "经 ssh -tt 远程执行；装 GitLab 时在本地终端手输 root 密码（回车默认 %s）" % rootpw),
+             "经 ssh -tt 远程执行；非 root 用户先输 sudo 密码，再手输 GitLab root 密码（回车默认 %s）" % rootpw),
         ]),
 
         ("h2", "B. 服务器本地部署（代码到位后在服务器上执行）"),
@@ -138,6 +138,7 @@ def build_blocks(cfg):
             ("6", "推送含 .gitlab-ci.yml 的仓库，触发流水线（含 qsort 冒烟）", None, None),
         ]),
         ("note", "步骤 1-4 可一条龙：python3 server/deploy/deploy.py all（= check + host + port + gitlab + runner）。"),
+        ("note", "deploy.py 需 root：非 root 用户命令前加 sudo（sudo python3 …，脚本会自检拦截）；root 直接运行。"),
 
         ("h2", "触发构建（webhook / token，HTTP 直连）"),
         ("para", "详见 server/webhook/README.md。git push 自动触发；或 curl + trigger token："),
@@ -187,6 +188,15 @@ def build_blocks(cfg):
             ("重新生成本文件", "python3 gen_quick_deploy.py"),
         ]),
         ("note", "仿真并发：%s（串行）。运行超时：%ss。GitLab 候选端口：%s。" % (conc, wall, cand)),
+
+        ("h2", "卸载 / 重置 GitLab（危险：删除全部数据，不可恢复）"),
+        ("code", [
+            "sudo gitlab-ctl uninstall                    # 停止并禁用所有服务（保留数据）",
+            "sudo gitlab-runner unregister --all-runners  # 注销 Runner（可选）",
+            "sudo apt-get remove --purge -y gitlab-ce gitlab-runner   # 卸载软件包",
+            "sudo rm -rf /etc/gitlab /var/opt/gitlab /var/log/gitlab /opt/gitlab /etc/gitlab-runner",
+        ]),
+        ("note", "删净后可重新 deploy.py all 全新部署；换端口先清空 config.ini [gitlab] http_port。"),
     ]
     return blocks
 

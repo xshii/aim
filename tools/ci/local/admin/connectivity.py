@@ -61,9 +61,12 @@ def gitlab_api(api, token, project, timeout=10):
 
 def remote_admin(user, host, port, ssh_opts):
     """校验远端登录用户具备管理员权限。返回 'root' / 'sudo' / 'none'（或异常时空串）。
+    'sudo' 含【免密 sudo】与【在 sudo/wheel/admin 组的需密码 sudo】——后者部署时经 sudo 交互输密码。
     一键部署需 dpkg/gitlab-ctl 等特权，故在 push 前先校验，避免部署中途才失败（C-10）。"""
     check = ('if [ "$(id -u)" = 0 ]; then echo root; '
-             'elif sudo -n true 2>/dev/null; then echo sudo; else echo none; fi')
+             'elif sudo -n true 2>/dev/null; then echo sudo; '
+             "elif id -nG 2>/dev/null | tr ' ' '\\n' | grep -qxE 'sudo|wheel|admin'; then echo sudo; "
+             'else echo none; fi')
     p = subprocess.run(ssh_cmd(user, host, port, ssh_opts) + [check],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
     out = p.stdout.decode("utf-8", "replace").strip().splitlines()
@@ -135,8 +138,10 @@ def main():
                     role = remote_admin(ruser, rhost, rport, ropts)
                     print("[conn] 远端管理员权限：%s" % (role or "未知"))
                     if role not in ("root", "sudo"):
-                        fails.append("远端用户 %s 无管理员权限（需 root 或免密 sudo），"
+                        fails.append("远端用户 %s 无管理员权限（需 root，或在 sudo/wheel/admin 组），"
                                      "一键部署将失败" % ruser)
+                    elif role == "sudo" and ruser != "root":
+                        print("[conn] 远端非 root，将以 sudo 运行 deploy.py（部署时可能需输一次 sudo 密码）。")
             except Exception as e:  # noqa
                 fails.append("SSH 执行失败：%s" % e)
     else:

@@ -45,9 +45,10 @@ python3 local/admin/deploy_remote.py all   # 连通性自检 → 取依赖 → S
 **B. 服务器本地部署（代码到位后在服务器上）**
 ```bash
 cd /opt/ci
-python3 server/deploy/deploy.py all   # 自检 → 锁 host/端口 → 装 GitLab(手输root密码) → 全自动注册 Runner
+# deploy.py 需 root：非 root 用户命令前加 sudo（脚本会自检拦截）；root 用户直接运行。
+sudo python3 server/deploy/deploy.py all   # 自检 → 锁 host/端口 → 装 GitLab(手输root密码) → 全自动注册 Runner
 # all 已含 Runner 全自动注册（gitlab-rails 建项目+签 token，GitLab 16+ 新流程）；
-# 单独重注册：python3 server/deploy/deploy.py runner（可加 --token glrt- 手动 fallback）
+# 单独重注册：sudo python3 server/deploy/deploy.py runner（可加 --token glrt- 手动 fallback）
 ```
 
 ## 离线依赖（手动 / 自动）

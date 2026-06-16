@@ -36,6 +36,12 @@ def check_env():
     print("python3:", sys.version.split()[0])
     if sys.version_info < (3, 8):
         print("[WARN] 期望 python3 >= 3.8")
+    euid = os.geteuid()
+    print("运行身份:", "root" if euid == 0 else "非 root（uid=%d）" % euid)
+    if euid != 0:
+        print("[ERROR] 装 GitLab/Runner 需 root。请用：sudo python3 deploy.py <action>"
+              "（或先 sudo -i 切 root）。")
+        ok = False
     found = subprocess.run(["which", "dpkg"], stdout=subprocess.PIPE).returncode == 0
     print("命令 dpkg:", "有" if found else "缺失")
     if not found:

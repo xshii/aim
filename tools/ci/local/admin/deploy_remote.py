@@ -100,11 +100,13 @@ def step_push(cfg):
 
 def step_remote_deploy(cfg):
     user, host, port, dest, opts = _remote(cfg)
-    # tty=True：远端 deploy.py 装 GitLab 前会 getpass 手输 root 密码，需伪终端把输入传过去。
+    # 非 root 用户用 sudo 提权运行整个 deploy.py（脚本内部即 root，特权命令/环境变量/getpass 全正常）。
+    # tty=True：让 sudo 密码与 GitLab root 密码都能在本地终端交互输入并传至远端。
+    prefix = "" if user == "root" else "sudo "
     cmd = connectivity.ssh_cmd(user, host, port, opts, tty=True) + \
-        ["cd %s && python3 server/deploy/deploy.py all" % dest]
+        ["cd %s && %spython3 server/deploy/deploy.py all" % (dest, prefix)]
     ci_config.run(cmd)
-    print("[remote] 已在 %s 执行 server/deploy/deploy.py all（含全自动 Runner 注册）。" % host)
+    print("[remote] 已在 %s 执行 deploy.py all（含全自动 Runner 注册）。" % host)
 
 
 def main():

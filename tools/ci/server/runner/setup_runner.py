@@ -46,6 +46,15 @@ puts "RUNNER_TOKEN=#{res.payload[:runner].token}"
 """
 
 
+def runner_registered():
+    """config.toml 已有 [[runners]] 即视为已注册——幂等：避免二次运行重复注册（累积僵尸 runner）。"""
+    try:
+        with open("/etc/gitlab-runner/config.toml", encoding="utf-8") as f:
+            return "[[runners]]" in f.read()
+    except FileNotFoundError:
+        return False
+
+
 def auto_runner_token(cfg):
     """gitlab-rails 建项目 + 签发项目级 authentication token，返回 glrt- token。"""
     pname = ci_config.get(cfg, "gitlab", "project_name", "CI Eval")
@@ -104,15 +113,18 @@ def main():
         print("apt 安装失败，回退 dpkg 多包安装")
         ci_config.run(["dpkg", "-i"] + debs)
 
-    url = (args.url or ci_config.external_url(cfg)).strip()
-    token = args.token.strip() if args.token else auto_runner_token(cfg)
-
-    print("[2/4] 注册 Runner（shell executor, tag=%s；GitLab 16+ authentication token）" % tag)
-    # 新流程：tag/locked/run_untagged 已在 gitlab-rails 建 runner 时设定；register 只需 url+token+executor。
-    ci_config.run(["gitlab-runner", "register", "--non-interactive",
-                   "--url", url, "--token", token,
-                   "--executor", "shell", "--description", name],
-                  redact={"--token"})
+    if not args.token and runner_registered():
+        print("[2/4] config.toml 已注册 Runner，跳过注册（幂等，避免二次运行重复注册）。\n"
+              "      重注册请先：gitlab-runner unregister --all-runners")
+    else:
+        url = (args.url or ci_config.external_url(cfg)).strip()
+        token = args.token.strip() if args.token else auto_runner_token(cfg)
+        print("[2/4] 注册 Runner（shell executor, tag=%s；GitLab 16+ authentication token）" % tag)
+        # 新流程：tag/locked/run_untagged 已在 gitlab-rails 建 runner 时设定；register 只需 url+token+executor。
+        ci_config.run(["gitlab-runner", "register", "--non-interactive",
+                       "--url", url, "--token", token,
+                       "--executor", "shell", "--description", name],
+                      redact={"--token"})
 
     print("[3/4] 设置 concurrent=%s（仿真串行）" % concurrent)
     cfg_path = "/etc/gitlab-runner/config.toml"
