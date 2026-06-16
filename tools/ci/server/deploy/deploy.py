@@ -5,12 +5,13 @@
 首次远端 bootstrap 见 local/admin/deploy_remote.py（SSH/SCP 推码+依赖，D-010）；本脚本只管
 服务器本地安装。GitLab 装本机、HTTP 直达，端口由 probe_port.py 探测锁定（避开被占用端口）。
 
-  python3 deploy.py all                       # 自检 → 锁 host → 锁端口 → 装 GitLab
-  python3 deploy.py runner --url U --token T   # 拿到 Token 后注册 Runner
-或分步：check / host / port / gitlab / runner
+  python3 deploy.py all       # 自检 → 锁 host → 锁端口 → 装 GitLab(手输root密码) → 全自动注册 Runner
+  python3 deploy.py runner    # 全自动注册 Runner（gitlab-rails 建项目+签 token，GitLab 16+ 新流程）
+或分步：check / host / port / gitlab / runner（runner 可加 --token glrt- 手动 fallback）
 宪法：遇缺失即停（C-10）；参数来自 config.ini（C-7）。
 """
 import argparse
+import getpass
 import os
 import subprocess
 import sys
@@ -48,6 +49,29 @@ def check_env():
     return ok
 
 
+def set_root_password_env():
+    """装 GitLab 前交互手输 root 初始密码（getpass 不回显），回车用 config 默认值。
+    经环境变量传给 install_gitlab 子进程，不走命令行/不入仓（C-1）。远端经 ssh -tt 传入。"""
+    if os.environ.get("GITLAB_ROOT_PASSWORD"):
+        return                                      # 已由上游注入则不重复询问
+    if os.path.exists("/opt/gitlab"):
+        # omnibus 仅在首次 reconfigure 初始化 DB 时读取该变量；已装则设了也不生效，跳过免误导。
+        print("[deploy] GitLab 已安装，跳过 root 密码设置（仅首次安装生效；改密用 gitlab-rails）。")
+        return
+    cfg = ci_config.load()
+    default = ci_config.get(cfg, "gitlab", "root_password_default", "88888888")
+    try:
+        pw = getpass.getpass("GitLab root 初始密码（回车用默认 %s，≥8 位）: " % default)
+    except EOFError:                                # 非交互(无 TTY)→ 用默认；Ctrl-C 不捕获，自然中止
+        print("\n非交互环境，用默认密码。")
+        pw = ""
+    pw = pw.strip() or default
+    if len(pw) < 8:
+        raise SystemExit("密码至少 8 位（GitLab 要求），停止。")
+    os.environ["GITLAB_ROOT_PASSWORD"] = pw
+    print("[deploy] root 初始密码已设定（脱敏），经环境变量注入 GitLab 安装。")
+
+
 def step_host():
     cfg = ci_config.load()
     host = ci_config.get(cfg, "server", "host", "").strip()
@@ -67,38 +91,29 @@ def step_port():
 
 
 def external_url():
-    cfg = ci_config.load()
-    if cfg.has_option("gitlab", "external_url") and ci_config.get(cfg, "gitlab", "external_url"):
-        return ci_config.get(cfg, "gitlab", "external_url")
-    host = ci_config.get(cfg, "server", "host", "").strip()
-    if not host:
-        raise SystemExit("host 未锁定，请先运行：python3 deploy.py host（或 all）")
-    port = ci_config.get(cfg, "gitlab", "http_port", "")
-    if not port:
-        raise SystemExit("http_port 未锁定，请先运行：python3 deploy.py port")
-    return "http://%s:%s" % (host, port)
+    return ci_config.external_url(ci_config.load())
 
 
 def step_gitlab():
     print("\n=== 安装 GitLab CE ===")
+    set_root_password_env()
     url = external_url()
     print("external_url =", url)
     py("install_gitlab.py", "--external-url", url)
-    print("下一步：浏览器打开", url, "建 Private 项目、拿 Runner Token，")
-    print("再运行：python3 deploy.py runner --url <URL> --token <TOKEN>")
+    print("GitLab 安装完成。Runner 将由 deploy.py 全自动注册（gitlab-rails 签 token）。")
 
 
-def step_runner(url, token):
-    print("\n=== 安装并注册 Runner ===")
-    py("setup_runner.py", "--url", url, "--token", token,
+def step_runner(token=None):
+    print("\n=== 安装并全自动注册 Runner ===")
+    extra = ["--token", token] if token else []
+    py("setup_runner.py", "--url", external_url(), *extra,
        redact={"--token"}, base=os.path.join(SERVER, "runner"))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["check", "host", "port", "gitlab", "runner", "all"])
-    ap.add_argument("--url")
-    ap.add_argument("--token")
+    ap.add_argument("--token", help="Runner authentication token(glrt-)；省略则全自动签发")
     args = ap.parse_args()
 
     if args.action == "check":
@@ -114,11 +129,8 @@ def main():
         step_port()
     if args.action in ("gitlab", "all"):
         step_gitlab()
-    if args.action == "runner":
-        if not args.url or not args.token:
-            print("runner 需要 --url 与 --token（勿编造）。", file=sys.stderr)
-            sys.exit(1)
-        step_runner(args.url, args.token)
+    if args.action in ("runner", "all"):
+        step_runner(args.token)
 
     print("\n完成。验证见 docs/tasks/iter1_skeleton.md。")
 

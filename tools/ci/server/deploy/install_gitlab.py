@@ -41,7 +41,11 @@ def main():
     debs.append(pkg)
 
     print("[1/3] 离线安装 GitLab CE: %s （EXTERNAL_URL=%s）" % (pkg, args.external_url))
+    # GITLAB_ROOT_PASSWORD 由 deploy.py 经环境变量注入（不走命令行/不入仓，C-1）；
+    # omnibus 在首次 reconfigure 初始化数据库时读取它设为 root 初始密码。
     env = dict(os.environ, EXTERNAL_URL=args.external_url)
+    if env.get("GITLAB_ROOT_PASSWORD"):
+        print("      已注入 GITLAB_ROOT_PASSWORD（脱敏），首次 reconfigure 将设为 root 初始密码。")
     try:
         subprocess.check_call(["apt-get", "install", "-y"] + debs, env=env)
     except subprocess.CalledProcessError:
@@ -53,10 +57,18 @@ def main():
     print("[3/3] 状态检查")
     ci_config.run(["gitlab-ctl", "status"])
 
+    pw_set = bool(os.environ.get("GITLAB_ROOT_PASSWORD"))
     print("\n完成。后续：")
     print("  1) 按 server/deploy/features.md 编辑 /etc/gitlab/gitlab.rb，禁用遥测、开所需特性")
     print("  2) gitlab-ctl reconfigure")
-    print("  3) 浏览器打开 %s，建 Private 项目，拿 Runner Token" % args.external_url)
+    if pw_set:
+        print("  3) 浏览器打开 %s，用 root + 部署时手输的密码登录（首登后请尽快改密）"
+              % args.external_url)
+    else:
+        print("  3) 浏览器打开 %s，用 root 登录（首登后请尽快改密）" % args.external_url)
+        print("     初始密码：sudo cat /etc/gitlab/initial_root_password"
+              "（reconfigure 后约 24h 自动删除）")
+    print("  4) Runner 由 deploy.py 全自动注册（gitlab-rails 签 token），无需手动建项目拿 token")
 
 
 if __name__ == "__main__":
