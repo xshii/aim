@@ -157,8 +157,8 @@ def build_blocks(cfg):
         ]),
 
         ("h2", "开发端 MCP（官方 mcp-server 插件，接 opencode）"),
-        ("note", "Jenkins 装 mcp-server 插件后自带 MCP 端点，无需自写。opencode 接入见 local/mcp/opencode.json.example。"),
-        ("code", ["MCP 端点: http://<服务器IP>:%s/mcp-server/   # 用 admin + API token 认证" % jport]),
+        ("note", "Jenkins 装 mcp-server 插件后自带 MCP 端点（无需自写）。服务端搭建+API token+接入见 local/mcp/README.md。"),
+        ("code", ["MCP 端点: http://<服务器IP>:%s/mcp-server/mcp   # Basic base64(admin:API_TOKEN)" % jport]),
 
         ("h2", "本机可验项（无需真 Jenkins）"),
         ("code", [

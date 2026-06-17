@@ -66,8 +66,8 @@ sudo python3 server/deploy/deploy.py all   # 自检 → apt 装 .deb + 从内源
 
 ## 查状态 / 拉日志（MCP，接 opencode）
 
-Jenkins 装官方 `mcp-server` 插件后自带 MCP 端点（job/build 工具），无需自写。opencode 接入见
-`local/mcp/opencode.json.example`。构建列表/控制台日志也可直接看 Jenkins UI。
+Jenkins 装官方 `mcp-server` 插件后自带 MCP 端点（job/build 工具），无需自写。**服务端搭建 + API token 生成 +
+opencode 接入见 `local/mcp/README.md`**（端点 `/mcp-server/mcp`，Basic 认证）。构建列表/日志也可直接看 Jenkins UI。
 
 ## qsort 评测 demo（本机可验，无需 Jenkins）
 ```bash

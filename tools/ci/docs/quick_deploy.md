@@ -76,9 +76,9 @@ push → 适配器校验 token+解析 payload → Jenkins buildWithParameters(GI
 
 ▶ 开发端 MCP（官方 mcp-server 插件，接 opencode）
 ────────────────────────────────────────────────────────────
-  › Jenkins 装 mcp-server 插件后自带 MCP 端点，无需自写。opencode 接入见 local/mcp/opencode.json.example。
+  › Jenkins 装 mcp-server 插件后自带 MCP 端点（无需自写）。服务端搭建+API token+接入见 local/mcp/README.md。
 
-    MCP 端点: http://<服务器IP>:8080/mcp-server/   # 用 admin + API token 认证
+    MCP 端点: http://<服务器IP>:8080/mcp-server/mcp   # Basic base64(admin:API_TOKEN)
 
 
 ▶ 本机可验项（无需真 Jenkins）

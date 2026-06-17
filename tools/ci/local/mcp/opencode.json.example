@@ -1,7 +1,7 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "_comment": "Jenkins 官方 mcp-server 插件提供 MCP 端点（D-016，无自写 MCP）。装上插件后 Jenkins 自带 job/build 工具。",
-  "_endpoint_note": "url 路径与认证以所装 mcp-server 插件版本文档为准；Authorization 用 admin + API token 的 Basic。",
+  "_comment": "Jenkins 官方 mcp-server 插件的 MCP 端点（D-016，无自写 MCP）。服务端搭建 + API token 生成见 local/mcp/README.md。",
+  "_auth": "Authorization = Basic base64(admin:API_TOKEN)；admin=config.ini [jenkins] admin_user，token 在 Jenkins UI 头像→Security→API Token 生成。端点 /mcp-server/mcp（Streamable HTTP）。",
   "mcp": {
     "jenkins": {
       "type": "remote",
