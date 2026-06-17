@@ -2,8 +2,8 @@
 # implements: FR-9, FR-11, FR-17
 """在【有网机器】上一次性产出 Jenkins 离线安装件（python3 标准库，零依赖）。
 版本/URL 全部来自 config.ini [fetch]（单一事实源 C-7）；产出到 tools/ci/local/offline/（大文件已 .gitignore）。
-产出：jenkins_<ver>_all.deb + jenkins-plugin-manager.jar（+ 可选 java .deb）。
-插件本体不在此下——服务器 deploy.py 用上面的 plugin-cli 从内源 Update Center 装（[jenkins] update_center_url）。
+产出：jenkins_<ver>_all.deb（+ 可选 java .deb）。
+插件不在此下——另跑 local/admin/fetch_plugins.py 下到 local/offline/plugins/（公网下、含全部依赖）。
 
   python3 fetch_offline.py [输出目录，默认 tools/ci/local/offline/]
 
@@ -36,20 +36,16 @@ def main():
     jenkins_deb = f("jenkins_deb")
     jenkins_deb_url = f("jenkins_deb_url")
     jenkins_version = f("jenkins_version")
-    pm_url = f("plugin_manager_url")
     java_deb = f("java_deb", "")
     java_deb_url = f("java_deb_url", "")
 
     out = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(CI_ROOT, "local", "offline")
     os.makedirs(out, exist_ok=True)
 
-    print("=== 1/3 下载 Jenkins .deb (%s) ===" % jenkins_version)
+    print("=== 1/2 下载 Jenkins .deb (%s) ===" % jenkins_version)
     download(jenkins_deb_url, os.path.join(out, jenkins_deb))
 
-    print("=== 2/3 下载 plugin-cli 工具（服务器据此从内源 UC 装插件）===")
-    download(pm_url, os.path.join(out, "jenkins-plugin-manager.jar"))
-
-    print("=== 3/3 Java 21 的 .deb ===")
+    print("=== 2/2 Java 21 的 .deb ===")
     if java_deb_url:
         download(java_deb_url, os.path.join(out, java_deb))
     else:
@@ -58,8 +54,8 @@ def main():
               % (java_deb or "openjdk-21-jre-headless_*.deb", out))
 
     print("\n完成：%s" % out)
-    print("  内含 %s + jenkins-plugin-manager.jar（+ Java 21 的 .deb）" % jenkins_deb)
-    print("  插件由服务器 deploy.py 从内源 Update Center 装（config.ini [jenkins] update_center_url）。")
+    print("  内含 %s（+ Java 21 的 .deb）" % jenkins_deb)
+    print("  插件另跑 local/admin/fetch_plugins.py 下到 local/offline/plugins/（公网下、含全部依赖）。")
     print("  下一步：经 local/admin/deploy_remote.py push 随代码推到服务器。")
 
 

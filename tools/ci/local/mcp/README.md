@@ -5,8 +5,9 @@
 
 ## 服务端（几乎不用配，开箱即用）
 
-1. **装插件**：`mcp-server` 已列在 `server/deploy/plugins.txt`，`deploy.py` 会从内源 Update Center 装上。
-   无需 JCasC、无需额外配置——装上即自动暴露端点。
+1. **装插件**：`mcp-server` 在 `server/deploy/plugins.txt` 里（连同其它插件全离线——内网 Update Center 装不了）。
+   有网机跑 `local/admin/fetch_plugins.py`（跨平台，Windows 装 python3+java 也能跑）从公网下它 + 全部依赖到 `local/offline/plugins/`，
+   `deploy.py` 部署时拷进 `/var/lib/jenkins/plugins`。装上即自动暴露端点，无需 JCasC、无需额外配置。
 2. **生成 API token**：部署后在 Jenkins UI → 头像（右上）→ Security → API Token → 生成，命名（如 `opencode-mcp`），
    **复制一次存好**（只显示一次）。MCP 认证用它，不用密码。
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # implements: FR-9, FR-11
 """Jenkins 离线部署（.deb + apt，role=server/deploy，python3 标准库）。需 root。
-离线件（jenkins/java 的 .deb + plugin-cli jar）由有网机 fetch_offline.py 产出，放 [offline] deps_dir；
-插件由本脚本用 plugin-cli 从内源 Update Center（[jenkins] update_center_url）装到 /var/lib/jenkins/plugins。
-  sudo python3 deploy.py all     # check → init(apt 装 deb + 内源 UC 装插件 + JCasC) → service(systemd)
+离线件由有网机产出放 [offline] deps_dir：jenkins/java 的 .deb（fetch_offline.py）+ 插件 .jpi（fetch_plugins.py）。
+本脚本 apt 装 .deb + 把插件 .jpi 拷进 Jenkins 默认插件路径 /var/lib/jenkins/plugins（内网 UC 装不了，故全离线）。
+  sudo python3 deploy.py all     # check → init(apt 装 deb + 拷离线插件 + JCasC) → service(systemd)
 或分步：check / init / service
 宪法：遇缺失即停（C-10）；参数来自 config.ini，密钥来自 config.local.ini（C-7, C-1）。"""
 import argparse
@@ -71,12 +71,10 @@ def check_env():
     if not has_jenkins:
         print("[ERROR] 缺 jenkins .deb（先在有网机跑 fetch_offline.py）。")
         ok = False
-    has_pm = os.path.isfile(os.path.join(deps, "jenkins-plugin-manager.jar"))
-    print("plugin-cli 工具:", "有" if has_pm else "[缺 jenkins-plugin-manager.jar]")
-    ok = ok and has_pm
-    uc = ci_config.get(cfg, "jenkins", "update_center_url", "").strip()
-    print("内源 Update Center:", uc or "[未配置! 填 config.ini [jenkins] update_center_url]")
-    ok = ok and bool(uc)
+    pdir = os.path.join(deps, "plugins")
+    njpi = len([f for f in os.listdir(pdir) if f.endswith((".jpi", ".hpi"))]) if os.path.isdir(pdir) else 0
+    print("离线插件 %s:" % pdir, ("%d 个 .jpi" % njpi) if njpi else "[缺! 先在有网机跑 fetch_plugins.py]")
+    ok = ok and njpi > 0
     print("=== 自检%s ===" % ("通过" if ok else "未通过"))
     return ok
 
@@ -103,24 +101,19 @@ def step_init():
     # apt 装会按 deb 默认配置自动起 jenkins；停掉，待插件/JCasC/drop-in 就位后由 service 用完整配置起。
     _run(["systemctl", "stop", "jenkins"], check=False)
 
-    # 从内源 Update Center 装插件（CI 服务器直连内源库；plugin-cli + plugins.txt）。
-    uc = ci_config.get(cfg, "jenkins", "update_center_url", "").strip()
-    if not uc:
-        raise SystemExit("config.ini [jenkins] update_center_url 为空：填内源 Update Center 地址（C-10）。")
-    pm_jar = os.path.join(deps, "jenkins-plugin-manager.jar")
-    if not os.path.isfile(pm_jar):
-        raise SystemExit("缺 %s（fetch_offline.py 应已下载并随 offline/ 推来）。" % pm_jar)
+    # 插件：内网 Update Center 装不了，故全部离线——把 offline/plugins/*.jpi（有网机 fetch_plugins.py 据
+    # plugins.txt 下好，含全部依赖）拷进 Jenkins 默认插件路径 /var/lib/jenkins/plugins。
+    bundled = os.path.join(deps, "plugins")
     plugins_dst = os.path.join(JENKINS_HOME, "plugins")
+    jpis = [f for f in os.listdir(bundled) if f.endswith((".jpi", ".hpi"))] if os.path.isdir(bundled) else []
+    if not jpis:
+        raise SystemExit("缺离线插件 %s/*.jpi：先在有网机跑 local/admin/fetch_plugins.py（C-10）。" % bundled)
     os.makedirs(plugins_dst, exist_ok=True)
-    cmd = ["/usr/bin/java", "-jar", pm_jar,
-           "--jenkins-update-center", uc,
-           "--plugin-file", os.path.join(HERE, "plugins.txt"),
-           "--plugin-download-directory", plugins_dst]
-    version = ci_config.get(cfg, "fetch", "jenkins_version", "")  # 单源版本（与 .deb 同）
-    if version:
-        cmd += ["--jenkins-version", version]
-    _run(cmd)
-    print("[init] 从内源 UC 装插件 → %s" % plugins_dst)
+    for f in jpis:
+        with open(os.path.join(bundled, f), "rb") as s, \
+                open(os.path.join(plugins_dst, f), "wb") as d:
+            d.write(s.read())
+    print("[init] 放置离线插件 %d 个 → %s" % (len(jpis), plugins_dst))
 
     # 渲染 JCasC：用 config.ini 填 @@占位@@（密码仍 ${JENKINS_ADMIN_PASSWORD} 运行时注入）。
     admin = ci_config.get(cfg, "jenkins", "admin_user", "admin")
