@@ -24,7 +24,7 @@
 
 **非目标**
 - 不托管代码（用内网现有仓库）
-- 不做 Web UI（状态靠 MCP + 日志文件 + CLI）
+- 不做交互式管理 UI（仅提供**只读** Web 页看任务状态/日志）
 - 不做通用 CI（只服务「串行评测」这一窄场景）
 - 不做分布式/多机调度（单机单 worker 起步）
 
@@ -105,15 +105,16 @@ loop:
 - `concurrency`（config，默认 1）：单 worker = 仿真串行（FR-3）。N License → systemd 起 N 个 worker 实例；`claim()` 的 `BEGIN IMMEDIATE` 保证不重复取。
 - 经 systemd 守护，崩溃自动重启；重启时 `reset_stale()` 清悬挂。
 
-### 4.3 webhook 接收器 + 查询接口 `server/webhook/receiver.py`（改造）
+### 4.3 webhook 接收器 + 极简 Web UI `server/webhook/receiver.py`（改造）
 
-同一 HTTP 服务（同一受限端口）提供触发与查询，均校验 **`X-Auth-Token`**（`hmac.compare_digest`；日志含代码/路径，内网亦须认证，C-1）：
+同一 HTTP 服务（同一受限端口）提供触发与只读查看：
 
-- `POST /`：校验 → 从 payload 解析 `repo`/`ref` → `db.enqueue()` → 返回 **202** + task id + 查询地址（删原「转发 GitLab trigger」逻辑）。
-- `GET /tasks/<id>`：返回任务状态（json：state/exit_code/时间戳）。
-- `GET /tasks/<id>/log`：返回任务日志全文。
+- `POST /`：**校验 `X-Auth-Token`**（`hmac.compare_digest`，防滥触发）→ 解析 `repo`/`ref` → `db.enqueue()` → 返回 **202** + task id（删原「转发 GitLab trigger」逻辑）。
+- `GET /`：HTML 任务列表（最近 50，状态上色）。
+- `GET /tasks/<id>`：HTML 详情（状态表 + 完整日志，`html.escape` 防注入）。
+- `GET /tasks/<id>/log`：纯文本日志（给 curl/脚本）。
 
-webhook 异步：POST 立即返回 task id（评测异步跑），触发方/人之后用 GET 查状态与日志；MCP 查同一 sqlite（给 opencode/AI）。payload 字段映射在 `_parse()` 适配真实平台格式（Bitbucket/SVN/自研）。
+**认证**：`POST` 触发必须带 `X-Auth-Token`；`GET`（网页/日志）内网只读、**不强制认证**（浏览器直接看）。webhook 异步：POST 立即返回 task id；**具体结果（各阶段输出 + report 指标）全在日志**，经网页 / `/log` / MCP 查看，无「另一个 CI」。payload 字段映射在 `_parse()` 适配真实平台（Bitbucket/SVN/自研）。
 
 **（可选，后续）回写代码仓**：若内网仓提供 commit status API，worker 完成后可 POST 回写 ✅/❌——需该 API 地址+认证，本期不做，留扩展点。
 

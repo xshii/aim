@@ -28,41 +28,53 @@ class TestReceiver(unittest.TestCase):
 
     def tearDown(self):
         self.httpd.shutdown()
+        self.httpd.server_close()
 
     def _req(self, method, path, headers=None, body=None):
         c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         c.request(method, path, body=body, headers=headers or {})
-        return c.getresponse()
+        r = c.getresponse()
+        data = r.read().decode("utf-8")
+        c.close()
+        return r.status, data
 
-    def test_valid_auth_enqueues(self):
-        r = self._req("POST", "/", {"X-Auth-Token": "s3cret"},
-                      json.dumps({"repo": "git@h:r.git", "ref": "main"}))
-        self.assertEqual(r.status, 202)
+    # --- POST 触发：必须 X-Auth ---
+    def test_post_valid_auth_enqueues(self):
+        st, _ = self._req("POST", "/", {"X-Auth-Token": "s3cret"},
+                          json.dumps({"repo": "git@h:r.git", "ref": "main"}))
+        self.assertEqual(st, 202)
         self.assertEqual(len(db.list_tasks(self.path)), 1)
 
-    def test_bad_auth_401_no_enqueue(self):
-        r = self._req("POST", "/", {"X-Auth-Token": "wrong"},
-                      json.dumps({"repo": "r", "ref": "main"}))
-        self.assertEqual(r.status, 401)
+    def test_post_bad_auth_401_no_enqueue(self):
+        st, _ = self._req("POST", "/", {"X-Auth-Token": "wrong"},
+                          json.dumps({"repo": "r", "ref": "main"}))
+        self.assertEqual(st, 401)
         self.assertEqual(len(db.list_tasks(self.path)), 0)
 
-    def test_missing_repo_400(self):
-        r = self._req("POST", "/", {"X-Auth-Token": "s3cret"}, json.dumps({"ref": "main"}))
-        self.assertEqual(r.status, 400)
+    def test_post_no_auth_401(self):
+        st, _ = self._req("POST", "/", {}, json.dumps({"repo": "r", "ref": "main"}))
+        self.assertEqual(st, 401)
 
-    def test_get_status_after_enqueue(self):
+    def test_post_missing_repo_400(self):
+        st, _ = self._req("POST", "/", {"X-Auth-Token": "s3cret"}, json.dumps({"ref": "main"}))
+        self.assertEqual(st, 400)
+
+    # --- GET 网页/日志：内网只读，不强制认证 ---
+    def test_get_list_no_auth_ok(self):
+        db.enqueue(self.path, "r", "main")
+        st, body = self._req("GET", "/")
+        self.assertEqual(st, 200)
+        self.assertIn("CI 评测任务", body)
+
+    def test_get_detail_shows_state(self):
         tid = db.enqueue(self.path, "r", "main")
-        r = self._req("GET", "/tasks/%d" % tid, {"X-Auth-Token": "s3cret"})
-        self.assertEqual(r.status, 200)
-        self.assertIn("queued", r.read().decode("utf-8"))
-
-    def test_get_unauth_401(self):
-        r = self._req("GET", "/tasks/1", {})
-        self.assertEqual(r.status, 401)
+        st, body = self._req("GET", "/tasks/%d" % tid)
+        self.assertEqual(st, 200)
+        self.assertIn("queued", body)
 
     def test_get_unknown_task_404(self):
-        r = self._req("GET", "/tasks/999", {"X-Auth-Token": "s3cret"})
-        self.assertEqual(r.status, 404)
+        st, _ = self._req("GET", "/tasks/999")
+        self.assertEqual(st, 404)
 
 
 if __name__ == "__main__":
