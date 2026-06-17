@@ -6,9 +6,7 @@
       "command": ["python3", "tools/ci/local/mcp/ci_control_server.py"],
       "enabled": true,
       "environment": {
-        "GITLAB_API": "http://<host>:<port>/api/v4",
-        "GITLAB_TOKEN": "<personal-access-token>",
-        "GITLAB_PROJECT": "<project-id-or-url-encoded-path>"
+        "CI_DB_PATH": "/opt/ci/var/ci.db"
       }
     }
   }
