@@ -38,7 +38,7 @@ printf 'admin:<API_TOKEN>' | base64
 
 ## 与触发的分工
 
-- **触发构建** → webhook 适配器（`server/webhook/`，X-Devcloud-Token → buildWithParameters）。
+- **触发构建** → 自研分支源插件 + 组织文件夹（git push 自动发现/触发，D-020）。
 - **查状态 / 拉日志** → 本 MCP（mcp-server 插件）。两者独立。
 
 > 参考：https://plugins.jenkins.io/mcp-server/

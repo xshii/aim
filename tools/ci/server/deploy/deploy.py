@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # implements: FR-9, FR-11
 """Jenkins 离线部署（.deb + apt，role=server/deploy，python3 标准库）。需 root。
-离线件由有网机产出放 [offline] deps_dir：jenkins/java 的 .deb（fetch_offline.py）+ 插件 .jpi（fetch_plugins.py）。
-本脚本 apt 装 .deb + 把插件 .jpi 拷进 Jenkins 默认插件路径 /var/lib/jenkins/plugins（内网 UC 装不了，故全离线）。
+离线件由有网机产出、手动拷到 [offline] deps_dir：jenkins/java 的 .deb（手动下）+ 插件 .hpi（fetch_plugins.py 产出的 tar.gz 解包）。
+本脚本 apt 装 .deb + 把插件 .hpi 拷进 Jenkins 默认插件路径 /var/lib/jenkins/plugins（内网 UC 装不了，故全离线）。
   sudo python3 deploy.py all     # check → init(apt 装 deb + 拷离线插件 + JCasC) → service(systemd)
 或分步：check / init / service
 宪法：遇缺失即停（C-10）；参数来自 config.ini，密钥来自 config.local.ini（C-7, C-1）。"""
@@ -19,9 +19,10 @@ while _R != "/" and not os.path.isfile(os.path.join(_R, "ci_config.py")):
 CI_ROOT = _R
 sys.path.insert(0, _R)
 import ci_config  # noqa: E402
-import constants   # noqa: E402
 
-ALLOWED_PORTS = constants.ALLOWED_PORTS
+# Jenkins 对外端口白名单（内网防火墙：80-90 / 443 / 8080-8090）；check 校验
+ALLOWED_PORTS = frozenset(range(80, 91)) | {443} | frozenset(range(8080, 8091))
+APT_ENV = dict(os.environ, DEBIAN_FRONTEND="noninteractive")   # apt 非交互
 ENV_FILE = "/etc/ci-jenkins.env"                       # systemd EnvironmentFile（0600，存密钥）
 JENKINS_HOME = "/var/lib/jenkins"                      # jenkins .deb 固定
 CASC = os.path.join(JENKINS_HOME, "jenkins.yaml")      # JCasC 落地处
@@ -56,33 +57,22 @@ def check_env():
         ok = ok and found
     cfg = ci_config.load()
     jport = _port(cfg, "jenkins", "http_port", "8080")
-    wport = _port(cfg, "webhook", "listen", "0.0.0.0:8090")
-    for label, p in (("Jenkins", jport), ("webhook", wport)):
-        good = p in ALLOWED_PORTS
-        print("%s 端口 %s:" % (label, p), "允许" if good else "[超范围! 仅 80-90 / 443 / 8080-8090]")
-        ok = ok and good
-    if jport == wport:
-        print("[ERROR] Jenkins 与 webhook 端口相同（%s），须不同。" % jport)
-        ok = False
+    good = jport in ALLOWED_PORTS
+    print("Jenkins 端口 %s:" % jport, "允许" if good else "[超范围! 仅 80-90 / 443 / 8080-8090]")
+    ok = ok and good
     deps = _deps_dir(cfg)
     debs = _debs(deps)
     has_jenkins = any("jenkins" in os.path.basename(d) for d in debs)
     print("离线 .deb（%s）：%s" % (deps, " ".join(os.path.basename(d) for d in debs) or "无"))
     if not has_jenkins:
-        print("[ERROR] 缺 jenkins .deb（先在有网机跑 fetch_offline.py）。")
+        print("[ERROR] 缺 jenkins .deb（在有网机手动下 jenkins/java 的 .deb 拷进 deps_dir）。")
         ok = False
     pdir = os.path.join(deps, "plugins")
-    njpi = len([f for f in os.listdir(pdir) if f.endswith((".jpi", ".hpi"))]) if os.path.isdir(pdir) else 0
-    print("离线插件 %s:" % pdir, ("%d 个 .jpi" % njpi) if njpi else "[缺! 先在有网机跑 fetch_plugins.py]")
-    ok = ok and njpi > 0
+    nhpi = len([f for f in os.listdir(pdir) if f.endswith((".hpi", ".jpi"))]) if os.path.isdir(pdir) else 0
+    print("离线插件 %s:" % pdir, ("%d 个 .hpi" % nhpi) if nhpi else "[缺! 先在有网机跑 fetch_plugins.py]")
+    ok = ok and nhpi > 0
     print("=== 自检%s ===" % ("通过" if ok else "未通过"))
     return ok
-
-
-def _run(cmd, check=True):
-    env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
-    print("+ " + " ".join(cmd))
-    return subprocess.run(cmd, check=check, env=env)
 
 
 def step_init():
@@ -90,34 +80,34 @@ def step_init():
     deps = _deps_dir(cfg)
     debs = _debs(deps)
     if not any("jenkins" in os.path.basename(d) for d in debs):
-        raise SystemExit("缺 jenkins .deb 于 %s：先在有网机跑 fetch_offline.py（C-10）。" % deps)
+        raise SystemExit("缺 jenkins .deb 于 %s：手动下 jenkins/java 的 .deb 拷进此目录（C-10）。" % deps)
 
     # apt 装本地 .deb（jenkins + java 一起，apt 解依赖）；失败回退 dpkg。
     print("[init] apt 安装离线 .deb：%s" % " ".join(os.path.basename(d) for d in debs))
-    if _run(["apt-get", "install", "-y"] + debs, check=False).returncode != 0:
+    if ci_config.run(["apt-get", "install", "-y"] + debs, check=False, env=APT_ENV).returncode != 0:
         print("[init] apt-get 失败，回退 dpkg -i（如缺依赖，请把依赖 .deb 一并放进 deps_dir）。")
-        _run(["dpkg", "-i"] + debs, check=False)
-        _run(["apt-get", "install", "-y", "-f"], check=False)
+        ci_config.run(["dpkg", "-i"] + debs, check=False, env=APT_ENV)
+        ci_config.run(["apt-get", "install", "-y", "-f"], check=False, env=APT_ENV)
     # apt 装会按 deb 默认配置自动起 jenkins；停掉，待插件/JCasC/drop-in 就位后由 service 用完整配置起。
-    _run(["systemctl", "stop", "jenkins"], check=False)
+    ci_config.run(["systemctl", "stop", "jenkins"], check=False)
 
-    # 插件：内网 Update Center 装不了，故全部离线——把 offline/plugins/*.jpi（有网机 fetch_plugins.py 据
+    # 插件：内网 Update Center 装不了，故全部离线——把 offline/plugins/*.hpi（有网机 fetch_plugins.py 据
     # plugins.txt 下好，含全部依赖）拷进 Jenkins 默认插件路径 /var/lib/jenkins/plugins。
     bundled = os.path.join(deps, "plugins")
     plugins_dst = os.path.join(JENKINS_HOME, "plugins")
-    jpis = [f for f in os.listdir(bundled) if f.endswith((".jpi", ".hpi"))] if os.path.isdir(bundled) else []
-    if not jpis:
-        raise SystemExit("缺离线插件 %s/*.jpi：先在有网机跑 local/admin/fetch_plugins.py（C-10）。" % bundled)
+    hpis = [f for f in os.listdir(bundled) if f.endswith((".hpi", ".jpi"))] if os.path.isdir(bundled) else []
+    if not hpis:
+        raise SystemExit("缺离线插件 %s/*.hpi：先在有网机跑 local/admin/fetch_plugins.py（C-10）。" % bundled)
     os.makedirs(plugins_dst, exist_ok=True)
-    for f in jpis:
+    for f in hpis:
         with open(os.path.join(bundled, f), "rb") as s, \
                 open(os.path.join(plugins_dst, f), "wb") as d:
             d.write(s.read())
-    print("[init] 放置离线插件 %d 个 → %s" % (len(jpis), plugins_dst))
+    print("[init] 放置离线插件 %d 个 → %s" % (len(hpis), plugins_dst))
 
     # 渲染 JCasC：用 config.ini 填 @@占位@@（密码仍 ${JENKINS_ADMIN_PASSWORD} 运行时注入）。
     admin = ci_config.get(cfg, "jenkins", "admin_user", "admin")
-    job = ci_config.get(cfg, "jenkins", "job_name", "qsort-eval")
+    job = ci_config.get(cfg, "jenkins", "job_name", "benchmark-ci")
     port = _port(cfg, "jenkins", "http_port", "8080")
     execs = ci_config.get(cfg, "jenkins", "executors", "4")
     with open(os.path.join(HERE, "jenkins.yaml"), encoding="utf-8") as fp:
@@ -128,22 +118,18 @@ def step_init():
                 .replace("@@CI_TOOLING@@", CI_ROOT))
     with open(CASC, "w", encoding="utf-8") as fp:
         fp.write(casc)
-    _run(["chown", "-R", "jenkins:jenkins", plugins_dst, CASC], check=False)
+    ci_config.run(["chown", "-R", "jenkins:jenkins", plugins_dst, CASC], check=False)
     print("[init] 写 JCasC:", CASC)
 
 
 def _write_env_file(cfg):
     """密钥从 config.local.ini 写入 systemd EnvironmentFile（0600，不入仓 C-1）。缺即停（C-10）。"""
-    secret = ci_config.secret("WEBHOOK_SECRET", cfg, "secrets", "webhook_secret")
     admin_pw = ci_config.secret("JENKINS_ADMIN_PASSWORD", cfg, "secrets", "jenkins_admin_password")
-    missing = [n for n, v in (("webhook_secret", secret),
-                              ("jenkins_admin_password", admin_pw)) if not v]
-    if missing:
-        raise SystemExit("config.local.ini [secrets] 缺 %s：填好再部署（C-10, C-1）。"
-                         % "、".join(missing))
+    if not admin_pw:
+        raise SystemExit("config.local.ini [secrets] 缺 jenkins_admin_password：填好再部署（C-10, C-1）。")
     fd = os.open(ENV_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write("WEBHOOK_SECRET=%s\nJENKINS_ADMIN_PASSWORD=%s\n" % (secret, admin_pw))
+        f.write("JENKINS_ADMIN_PASSWORD=%s\n" % admin_pw)
     print("[service] 写密钥环境文件:", ENV_FILE, "(0600)")
 
 
@@ -167,18 +153,11 @@ def step_service():
                         {"@@ENV_FILE@@": ENV_FILE, "@@CASC@@": CASC, "@@HTTP_PORT@@": str(port)}))
     print("[service] 写 Jenkins drop-in:", DROPIN)
 
-    # webhook 适配器服务。
-    dst = "/etc/systemd/system/ci-webhook.service"
-    with open(dst, "w", encoding="utf-8") as f:
-        f.write(_render("ci-webhook.service", {"@@ENV_FILE@@": ENV_FILE, "@@CI_ROOT@@": CI_ROOT}))
-    print("[service] 写入", dst)
-
     ci_config.run(["systemctl", "daemon-reload"])
-    ci_config.run(["systemctl", "enable", "jenkins", "ci-webhook"], check=False)
+    ci_config.run(["systemctl", "enable", "jenkins"], check=False)
     # 用 restart（非 enable --now）：apt 装时 jenkins 可能已用默认配置起过，必须 restart 才应用 drop-in。
-    for unit in ("jenkins", "ci-webhook"):
-        ci_config.run(["systemctl", "restart", unit], check=False)
-    ci_config.run(["systemctl", "--no-pager", "status", "jenkins", "ci-webhook"], check=False)
+    ci_config.run(["systemctl", "restart", "jenkins"], check=False)
+    ci_config.run(["systemctl", "--no-pager", "status", "jenkins"], check=False)
 
 
 def main():
@@ -196,7 +175,7 @@ def main():
         step_service()
     cfg = ci_config.load()
     port = _port(cfg, "jenkins", "http_port", "8080")
-    print("\n完成。验证：systemctl status jenkins ci-webhook；"
+    print("\n完成。验证：systemctl status jenkins；"
           "浏览器开 http://<host>:%s/（admin + config.local 里的密码登录）。" % port)
 
 

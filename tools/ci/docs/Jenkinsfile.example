@@ -1,0 +1,69 @@
+// Jenkinsfile 模板（放进【每个被测项目仓的根目录】）。
+// 组织文件夹 + 分支源插件会自动发现带本文件的仓/分支并建 job（加项目零重启，D-020）。
+// 按你的项目改 <编译/仿真命令> 和文件名；throttle 类别名要与中央 jenkins.yaml 的 throttleJobProperty 一致。
+//
+// 本例：顺序编译 A→B→C；仿真 A（用可并行的仿真器）、B（用串行的仿真器）；产物（结果 JSON / 仿真日志 /
+// 二进制 / 源码文件）全部归档回构建 → 构建端经 UI / REST / MCP 下载。
+// 不可信代码一律经 limited_run.py 套超时+资源限制（NFR-3）；CI 为 tools/ci 在服务器上的路径。
+//
+// 归档下载：构建页 "Build Artifacts"；或 REST
+//   http://<host>:8080/job/<组织文件夹>/job/<仓>/job/<分支>/lastSuccessfulBuild/artifact/<路径>
+
+pipeline {
+  agent any
+  environment { CI = '/opt/ci' }                 // tools/ci 在服务器上的落地路径（按 deps_dir 父目录改）
+  options {
+    disableConcurrentBuilds(abortPrevious: true) // 同仓新提交取消旧构建（auto-cancel）
+    buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))  // 留 30 次构建、其中 10 次的产物（防二进制塞满盘）
+  }
+
+  stages {
+    // organizationFolder/multibranch 已自动检出本仓，无需 checkout stage
+    stage('prep') { steps { sh 'mkdir -p sim build' } }   // 归档只认工作区内的相对路径，先建好目录
+
+    // 1) 顺序编译 A → B → C（产物落到 build/ 里以便归档）
+    stage('compile A') { steps { sh '<编译 A 的命令>   # 产物输出到 build/A.bin' } }
+    stage('compile B') { steps { sh '<编译 B 的命令>' } }
+    stage('compile C') { steps { sh '<编译 C 的命令>' } }
+
+    // 2) 仿真：throttle 认领中央 jenkins.yaml 的坑位——并行的仿真器→c2/c3-N、串行的→c1-N；
+    //    同一仿真器的所有项目仓用同一个坑位名才能共享其 license。两台不同仿真器并行跑、互不挡。
+    stage('simulate') {
+      parallel {
+        stage('A 仿真') {
+          options { throttle(['c2-1']) }   // c2-1 = A 用的仿真器（并发 2）；按其 license 数换 c1/c2/c3-N
+          steps {
+            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+              sh '''
+                python3 ${CI}/server/harness/limited_run.py . <A 的仿真命令>
+                # 仿真器若把日志/产物写到工作区外（/tmp、/opt/sim…），归档前拷进工作区：
+                cp /opt/sim/A.log  sim/A.log   || true
+              '''
+            }
+          }
+        }
+        stage('B 仿真') {
+          options { throttle(['c1-1']) }   // c1-1 = B 用的仿真器（串行）
+          steps {
+            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+              sh '''
+                python3 ${CI}/server/harness/limited_run.py . <B 的仿真命令>
+                cp /opt/sim/B.log  sim/B.log   || true
+              '''
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 归档回构建（UI / REST / MCP 都能下）：结果 JSON + 仿真日志 + 二进制 + 源码文件。
+  // artifacts 为逗号分隔的 glob（Ant 风格）：**/* 递归；按需增删路径。
+  post {
+    always {
+      archiveArtifacts artifacts: 'result_*.json, sim/*.log, build/*.bin, qsort.c',
+                       allowEmptyArchive: true,
+                       fingerprint: true
+    }
+  }
+}

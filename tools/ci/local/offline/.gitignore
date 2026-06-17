@@ -1,5 +1,5 @@
-# 离线大文件（Jenkins/Java 的 .deb / 插件 .jpi / plugin-cli jar 等），勿入仓（C-1 精神：仓库只放代码+占位）。
-# 仅保留本目录占位，内容物全部忽略。fetch_offline.py 默认产出到这里。
+# 离线大文件（Jenkins/Java 的 .deb / 插件 .hpi / jenkins-plugins.tar.gz 等），勿入仓（C-1：仓库只放代码+占位）。
+# 仅保留本目录占位，内容物全部忽略。fetch_plugins.py 的插件 + 手动下的 .deb 放这里。
 *
 !.gitignore
 !.gitkeep

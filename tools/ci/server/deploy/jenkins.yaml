@@ -23,52 +23,60 @@ jenkins:
 unclassified:
   location:
     url: "http://127.0.0.1:@@HTTP_PORT@@/"
-  # 仿真并发类别（D-003）：每个仿真器一个类别，maxConcurrentTotal = 该仿真器 license 数
-  # （同仿真器串行/限并发、不同仿真器并行）。下面是占位示例，按你的仿真器增改；
-  # 仿真 job 用 options{ throttle(['<类别名>']) } 引用。qsort demo 无仿真器，不引用任何类别。
+  # 并发限流（throttle-concurrents，D-003）。类别 = 全局共享计数器，Jenkinsfile 只能引用、改不了 max。
+  # 用预留通用坑位 c1/c2/c3（max=1/2/3）：各仓 Jenkinsfile 认领唯一名 throttle(['cX-N'])；不同名互不挡、可并行。
+  #  ▸ 仿真器：按其 license 数选档——串行/单 license→c1-N、并发 2→c2-N、并发 3→c3-N；
+  #    【同一仿真器的所有项目必须用同一个坑位】，才能共享其 license 计数（license>3 则在此另加更高档类别）。
+  #  ▸ 单任务只想"自己不并发"：用 options{ disableConcurrentBuilds() } 即可，无需占坑。
+  # ⚠ 同名类别共享同一计数器：不相干任务别撞同一个坑位。坑位用完了再来本文件加。
   throttleJobProperty:
     categories:
-      - categoryName: "sim-example"      # ← 改成你的仿真器名，每个仿真器一行
-        maxConcurrentTotal: 1            # ← = 该仿真器 license 数
-        maxConcurrentPerNode: 1
+      # —— c1-N（各自串行 max1；串行仿真器 / 互斥资源认领一个）——
+      - { categoryName: "c1-1", maxConcurrentTotal: 1, maxConcurrentPerNode: 1 }
+      - { categoryName: "c1-2", maxConcurrentTotal: 1, maxConcurrentPerNode: 1 }
+      - { categoryName: "c1-3", maxConcurrentTotal: 1, maxConcurrentPerNode: 1 }
+      - { categoryName: "c1-4", maxConcurrentTotal: 1, maxConcurrentPerNode: 1 }
+      - { categoryName: "c1-5", maxConcurrentTotal: 1, maxConcurrentPerNode: 1 }
+      - { categoryName: "c1-6", maxConcurrentTotal: 1, maxConcurrentPerNode: 1 }
+      - { categoryName: "c1-7", maxConcurrentTotal: 1, maxConcurrentPerNode: 1 }
+      - { categoryName: "c1-8", maxConcurrentTotal: 1, maxConcurrentPerNode: 1 }
+      # —— c2-N（并发 2；并发 2 的仿真器认领一个）——
+      - { categoryName: "c2-1", maxConcurrentTotal: 2, maxConcurrentPerNode: 2 }
+      - { categoryName: "c2-2", maxConcurrentTotal: 2, maxConcurrentPerNode: 2 }
+      - { categoryName: "c2-3", maxConcurrentTotal: 2, maxConcurrentPerNode: 2 }
+      - { categoryName: "c2-4", maxConcurrentTotal: 2, maxConcurrentPerNode: 2 }
+      - { categoryName: "c2-5", maxConcurrentTotal: 2, maxConcurrentPerNode: 2 }
+      - { categoryName: "c2-6", maxConcurrentTotal: 2, maxConcurrentPerNode: 2 }
+      - { categoryName: "c2-7", maxConcurrentTotal: 2, maxConcurrentPerNode: 2 }
+      - { categoryName: "c2-8", maxConcurrentTotal: 2, maxConcurrentPerNode: 2 }
+      # —— c3-N（并发 3；并发 3 的仿真器认领一个）——
+      - { categoryName: "c3-1", maxConcurrentTotal: 3, maxConcurrentPerNode: 3 }
+      - { categoryName: "c3-2", maxConcurrentTotal: 3, maxConcurrentPerNode: 3 }
+      - { categoryName: "c3-3", maxConcurrentTotal: 3, maxConcurrentPerNode: 3 }
+      - { categoryName: "c3-4", maxConcurrentTotal: 3, maxConcurrentPerNode: 3 }
+      - { categoryName: "c3-5", maxConcurrentTotal: 3, maxConcurrentPerNode: 3 }
+      - { categoryName: "c3-6", maxConcurrentTotal: 3, maxConcurrentPerNode: 3 }
+      - { categoryName: "c3-7", maxConcurrentTotal: 3, maxConcurrentPerNode: 3 }
+      - { categoryName: "c3-8", maxConcurrentTotal: 3, maxConcurrentPerNode: 3 }
 
-# qsort 评测 pipeline job（job-dsl 内联，离线自包含；webhook 适配器 buildWithParameters 触发）。
-# 三个参数在 job 创建时即存在 → 适配器首次触发即可带参。
+# 组织文件夹（organization folder，D-020）：用自研【分支源插件】扫内源 git →
+# 自动发现带 Jenkinsfile 的仓/分支 → 每个自动建子 pipeline job。
+#   ▸ 加项目 = 仓里放 Jenkinsfile（插件自动发现，Jenkins 零改动/零重启）；
+#   ▸ 流水线（编译 A/B/C + 仿真 A→L、B→E + throttle）写在各仓 Jenkinsfile，模板见 docs/Jenkinsfile.example；
+#   ▸ 触发：插件支持 push 即时触发就靠它；否则下方周期扫描兜底。
+#
+# ⚠ 下面 organizations{} 里的 navigator 是【占位】——换成你那个分支源插件的 job-dsl DSL
+#    （plugin id 见 plugins.txt）。若插件没有 job-dsl 扩展，先在 Jenkins UI 建好这个组织文件夹、
+#    导出其 config.xml 的 <navigators> 段，用下方 configure{} 注入；或暂以 UI 手建（一次性，非每项目）。
 jobs:
   - script: |
-      pipelineJob('@@JOB_NAME@@') {
-        description('AI Benchmark qsort 功能+性能评测（webhook 触发，参数化）')
-        parameters {
-          stringParam('GIT_URL', '', '被测仓库 git url')
-          stringParam('GIT_SHA', '', '提交 SHA（精确 checkout）')
-          stringParam('BRANCH', 'main', '分支（GIT_SHA 为空时用）')
+      organizationFolder('@@JOB_NAME@@') {
+        description('AI Benchmark CI · 扫内源 git 自动发现带 Jenkinsfile 的仓（D-020）')
+        organizations {
+          // ↓↓↓ 占位：替换为你的分支源插件 navigator（例：xxxSCMNavigator { ... }）
+          // 该插件若是类 gitlab 实现，DSL 名/字段以插件文档为准；填仓库组/owner + 凭证 id。
         }
-        definition {
-          cps {
-            sandbox(true)
-            script('''
-              pipeline {
-                agent any
-                options {
-                  disableConcurrentBuilds(abortPrevious: true)  // 同 job 新构建取消旧的（auto-cancel）
-                  // 仿真 job 在此加 throttle(['<仿真器类别>'])；qsort demo 无仿真器，不限并发
-                }
-                stages {
-                  stage('checkout') {
-                    steps {
-                      checkout([$class: 'GitSCM',
-                        branches: [[name: "${params.GIT_SHA ?: params.BRANCH}"]],
-                        userRemoteConfigs: [[url: params.GIT_URL]]])
-                    }
-                  }
-                  stage('功能+性能评测') {
-                    // 经 limited_run 加超时+资源限制跑不可信代码（NFR-3）；eval.py 内含功能+性能两项，退出码即门禁
-                    steps { sh 'python3 @@CI_TOOLING@@/server/harness/limited_run.py . python3 eval.py .' }
-                  }
-                }
-                post { always { archiveArtifacts artifacts: 'qsort_eval.json', allowEmptyArchive: true } }
-              }
-            '''.stripIndent())
-          }
-        }
+        // configure { it / 'navigators' << '...你的插件 navigator XML...' }   // 无 job-dsl 扩展时用
+        triggers { periodicFolderTrigger { interval('1d') } }   // 周期扫描兜底；push 即时触发靠插件
+        orphanedItemStrategy { discardOldItems { numToKeep(50) } }
       }

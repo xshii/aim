@@ -3,12 +3,21 @@
 > 状态：已实现（阶段 1-6 完成）。本文件是本次重构的 spec。
 > 决策：弃自研调度器，改用 Jenkins（D-016）。从头重写，不沿用自研调度器代码。
 > 自研版留底：git tag `scheduler-v1`（`git checkout scheduler-v1` 可恢复）。
+>
+> **后续精简（手动拷贝交付）**：删 SSH bootstrap（`deploy_remote.py`/`connectivity.py`）、urllib 取包
+> （`fetch_offline.py`）、doc 生成器（`gen_quick_deploy.py`）、一致性闸门（`consistency.py`）；插件改
+> `fetch_plugins.py` 用 curl + 公网 `update-center.json` 解依赖、sha256 校验、闭包自检、打 `tar.gz`，
+> 经介质/手动拷到服务器（D-019）。
+> **再后续（D-020）**：触发改用内网自研【分支源插件】+ 组织文件夹（Jenkins 内直接发现/触发，流水线随各仓
+> `Jenkinsfile`，加项目零重启），**删自研 webhook 适配器 `receiver.py` 整套**。下文 §3 架构图、§4.1/§4.3 的
+> webhook 适配器描述、§4.4 内联 pipeline 均为**当时重构记录**，已被取代；当前交付/触发以
+> README / quick_deploy / 01_spec(D-019,D-020) 为准。
 
 ## 1. 背景与动机
 
 自研调度器（D-013）已完整可用，但 CI 需求持续向"通用 CI 平台"生长（pipeline 配置、多任务、auto-cancel…），每个特性都要自己实现 = 重造 Jenkins。决定改用 Jenkins：标准特性开箱（pipeline-as-code、auto-cancel、Web UI、官方 MCP 插件），不再自己造。
 
-代码托管仍用**内网现有仓库**（不新建）；Jenkins 只做 CI。Jenkins 离线部署可行（jenkins/Java21 的 `.deb` apt 安装；插件 plugin-cli 从公网下全离线、deploy 拷进默认插件路径）。
+代码托管仍用**内网现有仓库**（不新建）；Jenkins 只做 CI。Jenkins 离线部署可行（jenkins/Java21 的 `.deb` apt 安装；插件用 curl + 公网 `update-center.json` 解依赖全离线下、deploy 拷进默认插件路径）。
 
 ## 2. 目标与非目标
 
@@ -51,7 +60,7 @@
 ## 4. 组件设计
 
 ### 4.1 离线部署 `server/deploy/`
-- **离线件获取**（有网机器，一次性）：`fetch_offline.py` 下 jenkins/Java21 的 `.deb`；`fetch_plugins.py` 据 `plugins.txt` 从**公网**下全部插件 + 依赖（plugin-cli 递归解依赖、不漏）。都产出到 `tools/ci/local/offline/`。
+- **离线件获取**（有网机器，一次性）：jenkins/Java21 的 `.deb` 手动下；`fetch_plugins.py` 用 curl + 公网 `update-center.json` 据 `plugins.txt` 解整棵依赖树、下全部插件 + 依赖（sha256 校验 + MANIFEST 闭包自检），打 `jenkins-plugins.tar.gz`。产出到 `tools/ci/local/offline/`。
 - **插件清单**见 `plugins.txt`（核心 git/pipeline/JCasC/job-dsl/throttle，另含凭证/清理/UI/邮件等）；fetch_plugins.py 递归解依赖一并下。
 - **部署** `deploy.py`（在内网服务器，需 root）：`apt-get install ./offline/*.deb`（jenkins+java 一起，apt 解依赖）、把离线插件 `.jpi` 拷进 `/var/lib/jenkins/plugins`、渲染 JCasC `jenkins.yaml`、写 systemd drop-in 覆盖 deb 自带的 `jenkins.service`（端口/JCasC/admin 密码）、启用。webhook 适配器同机起 `ci-webhook.service`。
 - 端口：Jenkins 与 webhook 适配器端口仍受白名单约束（80-90/443/8080-8090），`deploy.py check` 校验。
@@ -86,29 +95,8 @@ pipeline {
 ### 4.6 评测（复用）
 `server/demo/qsort/eval.py`（功能+性能）平台无关，Jenkinsfile 直接 `python3 eval.py .` 跑。qsort demo（qsort.c/cases.txt/eval.py）作为被测仓库样例。
 
-## 5. 删 / 改 / 留
+## 5. 决策记录（本设计相关；完整决策见 `01_spec.md` 第 8 节）
 
-- **删**：`server/scheduler/`（db/worker/checkout/测试/smoke/e2e）、`server/deploy/systemd/ci-webhook|ci-worker`（自研版）、自研 `01_spec` 中调度器专属内容、`03_scheduler_design.md`/`04_scheduler_plan.md`（自研 spec/plan，归档或删）
-- **改**：`server/webhook/receiver.py`（→Jenkins 适配器）、`server/deploy/deploy.py`（→Jenkins 离线部署）、`config.ini`（Jenkins 配置）、`constants.py`（保留 webhook/payload 常量，去掉任务状态）、`gen_quick_deploy.py`（→Jenkins 流程）、`local/mcp/`（删自写 MCP，改文档指向 Jenkins MCP 插件）
-- **留**：`server/demo/qsort/`（qsort.c/cases.txt/eval.py）、`local/admin/connectivity.py`（bootstrap 连通性/权限校验）、`local/admin/deploy_remote.py`（SSH/SCP bootstrap，调整推送内容）、`checks/consistency.py`、`docs/00_constitution.md`
-
-## 6. 验证（含局限，诚实标注）
-
-- **本机可验**：Jenkinsfile 语法（`jenkins-cli` 或 lint）、`eval.py`（功能+性能，已验证）、webhook 适配器单测（token 校验+payload 解析+构造 Jenkins 调用 URL，mock Jenkins）。
-- **需真机**：完整链路（webhook→适配器→Jenkins→job→eval）需起 Jenkins(.deb + Java21)；本机无 Jenkins 时无法 e2e。
-- **离线件获取**：需一台有网机器下 jenkins/java 的 `.deb` + 全部插件 `.jpi`（公网，含依赖；一次性）。
-
-## 7. 实现阶段
-
-1. webhook 适配器 `receiver.py` 重写（token+payload→Jenkins buildWithParameters）+ 单测（mock Jenkins）
-2. Jenkinsfile + JCasC `jenkins.yaml`（job/串行/auto-cancel/token）
-3. 离线部署：`plugins.txt` + `fetch_offline.py`/`fetch_plugins.py`(有网下 .deb+插件) + `deploy.py`(内网 apt 装 + 拷离线插件 + systemd) + 端口校验
-4. 删自研调度器 + config/constants/spec/一致性闸门同步
-5. `gen_quick_deploy` 改 Jenkins 流程 + 文档（MCP 指向官方插件、卸载）
-6. 一致性闸门通过 + 本机可验项（适配器单测、eval、Jenkinsfile lint）通过
-
-## 8. 决策记录
-
-- **D-016 弃自研调度器，改用 Jenkins**：CI 需求向通用平台生长，自研每特性都要自造=重造 Jenkins；Jenkins 标准特性开箱（pipeline/auto-cancel/UI/官方 MCP 插件）。代价：本机无法完整 e2e（需 Jenkins 环境）、离线部署需获取 jenkins/java 的 .deb + plugin-cli。自研版 git tag `scheduler-v1` 留底。
-- **D-017 保留 webhook 适配器**：内部开源用 X-Devcloud-Token 头 + 复杂 payload，适配器复用已验证校验/解析、解耦内部开源与 Jenkins，优于 Generic Webhook Trigger 插件的繁琐配置。
-- **D-018 JCasC 配置即代码**：离线可复现 Jenkins 配置（admin/job/串行/token），免手动点 UI。
+- **D-016 弃自研调度器，改用 Jenkins**：CI 需求向通用平台生长，自研每特性都要自造=重造 Jenkins；Jenkins 标准特性开箱（pipeline/auto-cancel/UI/官方 MCP 插件）。代价：本机无法完整 e2e（需 Jenkins 环境）、离线部署需获取 jenkins/java 的 .deb + 插件（curl 离线下）。自研版 git tag `scheduler-v1` 留底。
+- **D-018 JCasC 配置即代码**：离线可复现 Jenkins 配置（admin/组织文件夹/throttle 类别/MCP），免手动点 UI。
+- **D-020 触发用自研分支源插件 + 组织文件夹**：在 Jenkins 内直接发现带 `Jenkinsfile` 的仓/分支并触发，不自建 webhook 适配器；流水线随各仓 `Jenkinsfile`，加项目零重启。详见 `01_spec.md` D-020。

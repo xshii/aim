@@ -1,15 +1,21 @@
 # ============================================================
 # config.local.ini —— 本地敏感覆盖，【严禁入仓】（.gitignore 的 *.local.ini 已忽略）。
 # 复制为 config.local.ini 后填写。ci_config.load() 会自动叠加覆盖 config.ini。
-# 只放敏感项：webhook 共享密钥、Jenkins admin 密码。等效环境变量优先：WEBHOOK_SECRET、JENKINS_ADMIN_PASSWORD。
+# 只放敏感项：Jenkins admin 密码。等效环境变量优先：JENKINS_ADMIN_PASSWORD。
 #
-# 下离线包的代理不在此配：fetch_offline.py 直接读环境变量（含明文密码也不入仓 C-1），有网机上：
-#   export HTTPS_PROXY=http://user:pass@proxy.corp:8080
+# 含明文密码的下载代理放本文件 [proxy]（config.ini [proxy] 只留空模板，不入仓 C-1）；
+# fetch_plugins.py 读 [proxy] 注入 curl。
 # ============================================================
 
+[proxy]
+# 含密码的代理写这里（覆盖 config.ini 的空值）；不需要代理就整段删掉/留空。
+# curl 仅认小写 http_proxy；https/all/no 大小写都认，脚本会补齐。
+https_proxy = http://user:pass@proxy.corp:8080
+http_proxy = http://user:pass@proxy.corp:8080
+all_proxy =
+no_proxy = .corp,localhost,127.0.0.1
+
 [secrets]
-# 内源 webhook 校验的共享密钥（与内源站 webhook 配置一致；等效 env WEBHOOK_SECRET）。
-webhook_secret = change-me
-# Jenkins admin 密码：JCasC 建 admin 用户用；webhook 适配器也用 admin + 此密码调 Jenkins API
-# 触发构建（等效 env JENKINS_ADMIN_PASSWORD）。部署时 deploy.py 写入 systemd EnvironmentFile（0600）。
+# Jenkins admin 密码：JCasC 建 admin 用户用（等效 env JENKINS_ADMIN_PASSWORD）。
+# 部署时 deploy.py 写入 systemd EnvironmentFile（0600）。
 jenkins_admin_password = change-me
