@@ -4,17 +4,13 @@
 连通性自测（role=local/admin，Python 3.8 标准库）。admin check —— 在【执行机】上 push 前自检。
 供 deploy_remote 复用，也可独立排障（C-7）。与 server 的环境自检（deploy.py check）相互独立。
   python3 connectivity.py
-检查：远端 SSH 可达 + 远端有 python3（若配 [remote] host）、GitLab HTTP/API + Token 有效
-（若给 env GITLAB_API/TOKEN/PROJECT）、webhook 监听提示（若启用）。
+检查：远端 SSH 可达 + 远端有 python3 + 管理员权限（若配 [remote] host）、webhook 监听提示（若启用）。
 失败明确报告缺失项并非零退出（C-10）。
 """
 import os
 import socket
 import subprocess
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 
 _R = os.path.dirname(os.path.abspath(__file__))
 while _R != "/" and not os.path.isfile(os.path.join(_R, "ci_config.py")):
@@ -47,16 +43,6 @@ def remote_python(user, host, port, ssh_opts):
     p = subprocess.run(ssh_cmd(user, host, port, ssh_opts) + ["python3", "--version"],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
     return p.returncode, p.stdout.decode("utf-8", "replace").strip()
-
-
-def gitlab_api(api, token, project, timeout=10):
-    url = "%s/projects/%s" % (api.rstrip("/"), urllib.parse.quote(str(project), safe=""))
-    r = urllib.request.Request(url)
-    r.add_header("PRIVATE-TOKEN", token)
-    # 内网 GitLab 直连，不经代理（D-008）；屏蔽环境里的 HTTP(S)_PROXY，免与依赖下载代理冲突。
-    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with direct.open(r, timeout=timeout) as resp:
-        return resp.getcode()
 
 
 def remote_admin(user, host, port, ssh_opts):
@@ -146,23 +132,6 @@ def main():
                 fails.append("SSH 执行失败：%s" % e)
     else:
         print("[conn] 未配置 [remote] host，跳过 SSH 检查。")
-
-    api = os.environ.get("GITLAB_API", "").rstrip("/")
-    token = os.environ.get("GITLAB_TOKEN", "")
-    project = os.environ.get("GITLAB_PROJECT", "")
-    if api and token and project:
-        print("[conn] GitLab API %s 项目 %s ..." % (api, project))
-        try:
-            code = gitlab_api(api, token, project)
-            print("[conn] GitLab API HTTP %s" % code)
-            if code != 200:
-                fails.append("GitLab API 非 200：%s" % code)
-        except urllib.error.HTTPError as e:
-            fails.append("GitLab API HTTP %s（Token/项目？）" % e.code)
-        except Exception as e:  # noqa
-            fails.append("GitLab API 不可达：%s" % e)
-    else:
-        print("[conn] 未给 GITLAB_API/TOKEN/PROJECT 环境变量，跳过 GitLab 检查。")
 
     if cfg.has_section("webhook") and \
             ci_config.get(cfg, "webhook", "enabled", "false").lower() == "true":

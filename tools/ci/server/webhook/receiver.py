@@ -20,11 +20,13 @@ while _R != "/" and not os.path.isfile(os.path.join(_R, "ci_config.py")):
     _R = os.path.dirname(_R)
 sys.path.insert(0, _R)
 sys.path.insert(0, os.path.join(_R, "server", "scheduler"))
-import ci_config  # noqa: E402
-import db          # noqa: E402
+import ci_config     # noqa: E402
+import constants as C  # noqa: E402
+import db             # noqa: E402
 
 _CFG = ci_config.load()
-AUTH_HEADER = ci_config.get(_CFG, "webhook", "auth_header", "X-Auth-Token")
+AUTH_HEADER = C.AUTH_HEADER
+GIT_AUTH = ci_config.get(_CFG, "scheduler", "git_auth", "ssh")
 SECRET = ci_config.secret("WEBHOOK_SECRET", _CFG, "secrets", "webhook_secret")
 DB_PATH = os.environ.get("CI_DB_PATH") or ci_config.expand(
     ci_config.get(_CFG, "scheduler", "db_path", os.path.join(_R, "var/ci.db")))
@@ -37,9 +39,20 @@ STYLE = ("<style>body{font-family:monospace;margin:2em}"
 
 
 def _parse(body):
-    """从 payload 取 repo/ref。通用 repo/ref；真实内网平台 payload 字段在此适配。"""
+    """从内部开源 push webhook payload 取 (repo, ref)。
+    repo：project.git_ssh_url（ssh）/ git_http_url（http），按 [scheduler] git_auth 选；
+    ref：checkout_sha（精确 commit）优先，否则 ref 剥 refs/heads|tags/ 前缀。
+    兼容裸 {repo,ref}（便于手测/curl）。"""
     d = json.loads(body or "{}")
-    return d.get("repo", ""), d.get("ref", "main")
+    proj = d.get(C.F_PROJECT) or d.get(C.F_REPOSITORY) or {}
+    repo = (proj.get(C.F_HTTP_URL if GIT_AUTH == "http" else C.F_SSH_URL, "")
+            or d.get("repo", ""))
+    ref = d.get(C.F_CHECKOUT_SHA) or d.get(C.F_REF, "main")
+    for pre in C.REF_PREFIXES:
+        if ref.startswith(pre):
+            ref = ref[len(pre):]
+            break
+    return repo, ref
 
 
 def _esc(v):
@@ -57,15 +70,31 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(code, body, "text/html; charset=utf-8")
 
     def do_POST(self):
-        if not (SECRET and hmac.compare_digest(self.headers.get(AUTH_HEADER, ""), SECRET)):
-            return self._reply(401, "unauthorized\n")
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(length).decode("utf-8") if length else ""
+        authed = bool(SECRET) and hmac.compare_digest(self.headers.get(AUTH_HEADER, ""), SECRET)
+        # 打印收到的请求供确认（认证头脱敏，C-1）；生产看 journalctl -u ci-webhook。
+        print("[webhook] POST %s  X-Devcloud-Event=%s  %s=%s  -> %s"
+              % (self.path, self.headers.get(C.EVENT_HEADER, "-"), AUTH_HEADER,
+                 "***" if self.headers.get(AUTH_HEADER) else "(缺)",
+                 "认证通过" if authed else "认证失败→401"), flush=True)
+        if not authed:
+            return self._reply(401, "unauthorized\n")
+        print("[webhook] body: %s" % (body[:2000] if body else "(空)"), flush=True)
         try:
             repo, ref = _parse(body)
+            print("[webhook] 解析: repo=%s  ref=%s" % (repo, ref), flush=True)
             if not repo:
-                return self._reply(400, "missing repo\n")
+                # 非 push 事件 / payload 无 repo：确认收到但忽略，避免平台无意义重试。
+                print("[webhook] 无 repo（非 push 事件？），忽略", flush=True)
+                return self._reply(200, "ignored: no repo\n")
+            existing = db.find_active(DB_PATH, repo, ref)
+            if existing:
+                # 幂等：同 commit 已有未完成任务，复用不重复入队（防重试堵队列）。
+                print("[webhook] 幂等命中，复用 task %d" % existing, flush=True)
+                return self._reply(200, "duplicate: task %d active\n" % existing)
             tid = db.enqueue(DB_PATH, repo, ref)
+            print("[webhook] 入队: task %d" % tid, flush=True)
             self._reply(202, "queued: task %d (GET /tasks/%d)\n" % (tid, tid))
         except Exception as e:  # noqa: BLE001
             self._reply(500, "enqueue failed: %s\n" % e)

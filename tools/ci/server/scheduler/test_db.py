@@ -38,6 +38,15 @@ class TestDb(unittest.TestCase):
         self.assertEqual(db.reset_stale(self.path), 1)
         self.assertEqual(db.get(self.path, tid)["state"], "error")
 
+    def test_find_active_dedup(self):
+        a = db.enqueue(self.path, "r", "main")
+        self.assertEqual(db.find_active(self.path, "r", "main"), a)   # queued 算活跃
+        db.claim(self.path)
+        self.assertEqual(db.find_active(self.path, "r", "main"), a)   # running 也算
+        db.finish(self.path, a, "passed", 0, "/l")
+        self.assertIsNone(db.find_active(self.path, "r", "main"))     # 完成后不算
+        self.assertIsNone(db.find_active(self.path, "r", "other"))    # 不同 ref 不算
+
 
 if __name__ == "__main__":
     unittest.main()

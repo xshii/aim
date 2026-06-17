@@ -17,8 +17,9 @@ while _R != "/" and not os.path.isfile(os.path.join(_R, "ci_config.py")):
 CI_ROOT = _R
 sys.path.insert(0, _R)
 import ci_config  # noqa: E402
+import constants   # noqa: E402
 
-ALLOWED_PORTS = set(range(80, 91)) | {443} | set(range(8080, 8091))
+ALLOWED_PORTS = constants.ALLOWED_PORTS
 
 
 def check_env():

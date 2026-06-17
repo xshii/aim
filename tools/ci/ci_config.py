@@ -102,42 +102,6 @@ def local_ip():
         return "127.0.0.1"
 
 
-def get_deps_dir(cfg):
-    """[offline] deps_dir：为空时用 当前工作目录/offline。"""
-    d = get(cfg, "offline", "deps_dir", "").strip()
-    if d:
-        return expand(d)
-    return os.path.join(os.getcwd(), "offline")
-
-
-def external_url(cfg):
-    """GitLab 对外地址：优先 [gitlab] external_url，否则 [server] host + [gitlab] http_port 组装。
-    缺 host/port 即停（C-10）。单一实现，供 deploy 与 setup_runner 复用（C-7）。"""
-    if cfg.has_option("gitlab", "external_url") and get(cfg, "gitlab", "external_url").strip():
-        return get(cfg, "gitlab", "external_url").strip()
-    host = get(cfg, "server", "host", "").strip()
-    if not host:
-        raise SystemExit("host 未锁定，请先运行：python3 deploy.py host（或 all）")
-    port = get(cfg, "gitlab", "http_port", "").strip()
-    if not port:
-        raise SystemExit("http_port 未锁定，请先运行：python3 deploy.py port")
-    return "http://%s:%s" % (host, port)
-
-
-def proxies(cfg=None):
-    """HTTP(S) 代理：优先环境变量，其次 config.local.ini [proxy]（含明文密码，不入仓）。
-    返回 urllib.ProxyHandler 可用的 {scheme: url}。"""
-    cfg = cfg or load()
-    out = {}
-    for scheme, env in (("http", "HTTP_PROXY"), ("https", "HTTPS_PROXY")):
-        val = (os.environ.get(env) or os.environ.get(env.lower()) or
-               (cfg.get("proxy", scheme + "_proxy", fallback="")
-                if cfg.has_section("proxy") else ""))
-        if val.strip():
-            out[scheme] = val.strip()
-    return out
-
-
 def secret(env_name, cfg=None, section="secrets", key=None):
     """取敏感值：优先环境变量 env_name，其次 config.local.ini [section] key（不入仓，C-1）。"""
     v = os.environ.get(env_name, "")

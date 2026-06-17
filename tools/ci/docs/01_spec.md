@@ -159,6 +159,12 @@ FR-12 的开发端 MCP 须遵循标准 MCP stdio 握手（`initialize` / `tools/
 含 `protocolVersion`、`capabilities`、工具 `inputSchema`），可由 opencode CLI 等标准 MCP
 客户端经 `opencode.json` 的 mcp(local/stdio) 直接接入。凭证仍用环境变量注入（C-1）。决策见 D-012。
 
+**FR-21 任务队列与调度**
+
+webhook 入队的评测任务持久化于 sqlite（`server/scheduler/db.py`），由单 worker 串行 claim 执行
+（`server/scheduler/worker.py`，`concurrency=1` 即仿真串行）。状态机 queued→running→{passed|failed|error}，
+供只读 Web UI 与 MCP 查询。此为弃 GitLab 改自研调度器（D-013）的核心组件，详见 `docs/03_scheduler_design.md`。
+
 ### 3.1.1 功能性需求状态总表
 
 | 编号 | 名称 | 状态 |

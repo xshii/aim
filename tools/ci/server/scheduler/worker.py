@@ -15,6 +15,7 @@ while _R != "/" and not os.path.isfile(os.path.join(_R, "ci_config.py")):
 sys.path.insert(0, _R)
 import ci_config          # noqa: E402
 import checkout as _checkout  # noqa: E402
+import constants as C     # noqa: E402
 import db                 # noqa: E402
 
 CI_ROOT = _R
@@ -62,10 +63,10 @@ def run_one(cfg, do_checkout=_checkout.checkout, run_pipeline=run_pipeline):
             do_checkout(row["repo"], row["ref"], ws, git_auth=cfg.git_auth,
                         ssh_key=cfg.ssh_key, http_token=cfg.http_token, log=log)
             rc = run_pipeline(ws, log)
-            db.finish(cfg.db_path, tid, "passed" if rc == 0 else "failed", rc, log_path)
+            db.finish(cfg.db_path, tid, C.ST_PASSED if rc == 0 else C.ST_FAILED, rc, log_path)
         except Exception as e:  # noqa: BLE001
             log.write("\n[worker] 任务失败：%s\n" % e)
-            db.finish(cfg.db_path, tid, "error", None, log_path)
+            db.finish(cfg.db_path, tid, C.ST_ERROR, None, log_path)
     return True
 
 
