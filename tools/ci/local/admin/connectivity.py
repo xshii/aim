@@ -133,10 +133,9 @@ def main():
     else:
         print("[conn] 未配置 [remote] host，跳过 SSH 检查。")
 
-    if cfg.has_section("webhook") and \
-            ci_config.get(cfg, "webhook", "enabled", "false").lower() == "true":
-        print("[conn] webhook 接收器监听：%s（启服务时占用此端口）"
-              % ci_config.get(cfg, "webhook", "listen", "0.0.0.0:9100"))
+    if cfg.has_section("webhook"):
+        print("[conn] webhook 适配器监听：%s（部署后占用此端口）"
+              % ci_config.get(cfg, "webhook", "listen", "0.0.0.0:8090"))
 
     print("=== 连通性%s ===" % ("通过" if not fails else "未通过"))
     for f in fails:

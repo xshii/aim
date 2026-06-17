@@ -22,7 +22,7 @@ tools/ci/
 
 | 角色 | 谁/何时 | 入口 |
 |------|---------|------|
-| **有网机·一次性** | 产出 Jenkins 离线包（WAR+插件+JDK） | `python3 server/deploy/fetch_offline.py` |
+| **有网机·一次性** | 产出离线件（jenkins .deb + 插件 + java .deb） | `python3 server/deploy/fetch_offline.py` |
 | **local/admin** | 客户端·首次，从执行机远端 bootstrap | `python3 local/admin/deploy_remote.py all` |
 | **server/deploy** | 服务器·部署时（需 root） | `sudo python3 server/deploy/deploy.py all` |
 | **server·运行时** | Jenkins 自动执行评测 | JCasC 预配的 pipeline job（checkout → `python3 eval.py .`） |
@@ -32,28 +32,29 @@ tools/ci/
 
 详见 `docs/quick_deploy.md`（由 config.ini 自动生成，命令以它为准）。
 
-**0. 离线包（有网机，一次性）**
+**0. 离线件（有网机，一次性）**
 ```bash
-# 改 fetch_offline.py 顶部版本号为当前 LTS/发行版（见 docs/OFFLINE_DEPENDENCIES.md）
-python3 server/deploy/fetch_offline.py     # 产出 jenkins-offline.tar.gz（~350MB）
+# 改 config.ini [fetch] 版本/URL 为内网可下版本（见 docs/OFFLINE_DEPENDENCIES.md）
+python3 server/deploy/fetch_offline.py     # 下 jenkins .deb + 插件 到 tools/ci/offline/
+# Java：把 JDK/JRE 21 的 .deb 也放进 tools/ci/offline/
 ```
 
 **A. 首次远端 bootstrap（在执行机上，新机首搭用）**
 ```bash
-# 填 config.ini [remote]（目标机 host/user/dest）；离线包放本地 [offline] deps_dir
-python3 local/admin/deploy_remote.py all   # 连通性自检 → SSH/SCP 推代码+离线包 → 远程跑 deploy.py
+# 填 config.ini [remote]（目标机 host/user/dest）
+python3 local/admin/deploy_remote.py all   # 连通性自检 → SSH/SCP 推代码+offline/ → 远程跑 deploy.py
 ```
 
-**B. 服务器本地部署（代码+离线包到位后在服务器上，需 root）**
+**B. 服务器本地部署（代码+offline/ 到位后在服务器上，需 root）**
 ```bash
 cd /opt/ci
-sudo python3 server/deploy/deploy.py all   # 自检 → 解包+放插件+渲染 JCasC → systemd(ci-jenkins+ci-webhook)
+sudo python3 server/deploy/deploy.py all   # 自检 → apt 装 .deb + 放插件 + JCasC → systemd(jenkins+ci-webhook)
 ```
 
 ## 离线依赖
 
-见 `docs/OFFLINE_DEPENDENCIES.md`：有网机 `fetch_offline.py` 下 WAR+插件(含依赖)+JDK21 打包传入内网。
-插件清单在 `server/deploy/plugins.txt`。
+见 `docs/OFFLINE_DEPENDENCIES.md`：有网机 `fetch_offline.py` 下 jenkins `.deb` + 插件到 `tools/ci/offline/`；
+Java 21 的 `.deb` 一并放入。插件清单在 `server/deploy/plugins.txt`，版本/URL 在 `config.ini [fetch]`。
 
 ## 触发构建
 
@@ -86,7 +87,7 @@ Jenkins pipeline 的评测 stage 即 `python3 eval.py .`（被测仓库根含 ev
 ## 关键设计
 
 - **CI 框架 Jenkins**（D-016）：标准特性开箱（pipeline-as-code、auto-cancel、Web UI、官方 MCP 插件）；
-  离线部署（WAR+插件+JDK，JCasC 配置即代码 D-018）。自研调度器版留底 git tag `scheduler-v1`。
+  .deb + apt 离线安装（jenkins/java 的 .deb + 插件，JCasC 配置即代码 D-018）。
 - **webhook 适配器**（D-017）：内源 X-Devcloud-Token 头 + 复杂 payload，复用已验证校验/解析，解耦 Jenkins。
 - **仿真严格串行**（D-003）：Jenkins `numExecutors=1`（单节点同一时刻仅 1 个构建 = License 数）。
 - **凭证不入仓**（C-1/D-009）：私钥留 ~/.ssh；webhook 密钥/Jenkins admin 密码经 env 或 `config.local.ini`。

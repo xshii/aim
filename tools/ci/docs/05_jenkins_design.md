@@ -8,12 +8,12 @@
 
 自研调度器（D-013）已完整可用，但 CI 需求持续向"通用 CI 平台"生长（pipeline 配置、多任务、auto-cancel…），每个特性都要自己实现 = 重造 Jenkins。决定改用 Jenkins：标准特性开箱（pipeline-as-code、auto-cancel、Web UI、官方 MCP 插件），不再自己造。
 
-代码托管仍用**内网现有仓库**（不新建）；Jenkins 只做 CI。Jenkins 离线部署可行（WAR 单文件 ~80MB + `plugin-installation-manager-tool` 自动解插件依赖 + JDK，总量 ~350MB，远小于 GitLab 3.5G）。
+代码托管仍用**内网现有仓库**（不新建）；Jenkins 只做 CI。Jenkins 离线部署可行（jenkins `.deb` + `plugin-installation-manager-tool` 解插件依赖 + Java21 的 `.deb`，apt 安装）。
 
 ## 2. 目标与非目标
 
 **目标**
-- Jenkins 离线部署（内网无外网，WAR + 插件离线包 + JDK + JCasC 可复现配置）
+- Jenkins 离线部署（内网无外网，jenkins/java 的 .deb + 插件 + JCasC 可复现配置，apt 安装）
 - 接内部开源 webhook（X-Devcloud-Token + push payload）触发评测
 - 评测 qsort 功能 + 性能（复用 `eval.py`）
 - 仿真串行（并发=License 数）
@@ -51,9 +51,9 @@
 ## 4. 组件设计
 
 ### 4.1 离线部署 `server/deploy/`
-- **离线包获取**（有网机器，一次性）：`fetch_offline.sh` —— 用 `jenkins-plugin-manager.jar --plugin-file plugins.txt -d plugins/` 下插件+依赖；连同 `jenkins.war`、JDK tar 一起打包。
+- **离线件获取**（有网机器，一次性）：`fetch_offline.py`（读 `config.ini [fetch]` 版本/URL）—— 下 jenkins `.deb` + 用 `jenkins-plugin-manager.jar --plugin-file plugins.txt` 下插件+依赖，产出到 `tools/ci/offline/`；Java21 的 `.deb` 一并放入。
 - **插件清单** `plugins.txt`：`git`、`workflow-aggregator`(pipeline)、`configuration-as-code`(JCasC)、`throttle-concurrents`(串行)、`mcp-server`(MCP) 及其依赖（工具自动解）。
-- **部署** `deploy.py`（在内网服务器，需 root）：解 JDK、放 `jenkins.war` 与 `plugins/` 到 `JENKINS_HOME`、写 JCasC `jenkins.yaml`、写 systemd `ci-jenkins.service`（`java -jar jenkins.war --httpPort=<端口>`）、启用。webhook 适配器同机起 `ci-webhook.service`。
+- **部署** `deploy.py`（在内网服务器，需 root）：`apt-get install ./offline/*.deb`（jenkins+java 一起，apt 解依赖）、放 `plugins/` 到 `/var/lib/jenkins/plugins`、渲染 JCasC `jenkins.yaml`、写 systemd drop-in 覆盖 deb 自带的 `jenkins.service`（端口/JCasC/admin 密码）、启用。webhook 适配器同机起 `ci-webhook.service`。
 - 端口：Jenkins 与 webhook 适配器端口仍受白名单约束（80-90/443/8080-8090），`deploy.py check` 校验。
 
 ### 4.2 JCasC 配置 `server/deploy/jenkins.yaml`
@@ -95,20 +95,20 @@ pipeline {
 ## 6. 验证（含局限，诚实标注）
 
 - **本机可验**：Jenkinsfile 语法（`jenkins-cli` 或 lint）、`eval.py`（功能+性能，已验证）、webhook 适配器单测（token 校验+payload 解析+构造 Jenkins 调用 URL，mock Jenkins）。
-- **需真机**：完整链路（webhook→适配器→Jenkins→job→eval）需起 Jenkins(JDK+WAR+插件)；本机无 JDK/Jenkins 时无法 e2e。**这是相对自研路线丢失的能力**（自研本机能完整 e2e）。
-- **离线包获取**：需一台有网机器下 ~350MB（慢网约数小时，一次性）。
+- **需真机**：完整链路（webhook→适配器→Jenkins→job→eval）需起 Jenkins(.deb + Java21)；本机无 Jenkins 时无法 e2e。
+- **离线件获取**：需一台有网机器下 jenkins/java 的 `.deb` + 插件（一次性）。
 
 ## 7. 实现阶段
 
 1. webhook 适配器 `receiver.py` 重写（token+payload→Jenkins buildWithParameters）+ 单测（mock Jenkins）
 2. Jenkinsfile + JCasC `jenkins.yaml`（job/串行/auto-cancel/token）
-3. 离线部署：`plugins.txt` + `fetch_offline.sh`(有网下包) + `deploy.py`(内网部署 systemd) + 端口校验
+3. 离线部署：`plugins.txt` + `fetch_offline.py`(有网下 .deb+插件) + `deploy.py`(内网 apt 装 + systemd) + 端口校验
 4. 删自研调度器 + config/constants/spec/一致性闸门同步
 5. `gen_quick_deploy` 改 Jenkins 流程 + 文档（MCP 指向官方插件、卸载）
 6. 一致性闸门通过 + 本机可验项（适配器单测、eval、Jenkinsfile lint）通过
 
 ## 8. 决策记录
 
-- **D-016 弃自研调度器，改用 Jenkins**：CI 需求向通用平台生长，自研每特性都要自造=重造 Jenkins；Jenkins 标准特性开箱（pipeline/auto-cancel/UI/官方 MCP 插件）。代价：本机无法完整 e2e（需 JDK+Jenkins）、离线部署需获取 ~350MB 包。自研版 git tag `scheduler-v1` 留底。
+- **D-016 弃自研调度器，改用 Jenkins**：CI 需求向通用平台生长，自研每特性都要自造=重造 Jenkins；Jenkins 标准特性开箱（pipeline/auto-cancel/UI/官方 MCP 插件）。代价：本机无法完整 e2e（需 Jenkins 环境）、离线部署需获取 jenkins/java 的 .deb+插件。自研版 git tag `scheduler-v1` 留底。
 - **D-017 保留 webhook 适配器**：内部开源用 X-Devcloud-Token 头 + 复杂 payload，适配器复用已验证校验/解析、解耦内部开源与 Jenkins，优于 Generic Webhook Trigger 插件的繁琐配置。
 - **D-018 JCasC 配置即代码**：离线可复现 Jenkins 配置（admin/job/串行/token），免手动点 UI。

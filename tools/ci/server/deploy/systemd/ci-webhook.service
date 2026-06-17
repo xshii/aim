@@ -1,6 +1,6 @@
 [Unit]
 Description=CI webhook adapter (X-Devcloud-Token -> Jenkins buildWithParameters)
-After=network.target ci-jenkins.service
+After=network.target jenkins.service
 
 [Service]
 # WEBHOOK_SECRET + JENKINS_ADMIN_PASSWORD 由 deploy.py 从 config.local.ini 写入，0600，不入仓（C-1）。

@@ -1,34 +1,36 @@
 ════════════════════════════════════════════════════════════
- Quick Deploy · Jenkins CI（离线）
+ Quick Deploy · Jenkins CI（.deb 离线）
 ════════════════════════════════════════════════════════════
 
   › 自动生成（gen_quick_deploy.py 依据 config.ini），改配置后重跑。
 
-  › CI 框架=Jenkins（D-016）：webhook 适配器校验 token → 调 Jenkins buildWithParameters；Jenkins(JCasC 离线) 跑 qsort 功能+性能评测；官方 MCP 插件接 opencode。代码托管仍用内网现有仓库。
+  › CI 框架=Jenkins（.deb apt 安装）：webhook 适配器校验 token → 调 Jenkins buildWithParameters；Jenkins(JCasC 预配) 跑 qsort 功能+性能评测；官方 MCP 插件接 opencode。代码托管仍用内网现有仓库。
 
 
 ▶ 准备
 ────────────────────────────────────────────────────────────
-  1. 有网机：跑 server/deploy/fetch_offline.py 产出离线包（jenkins.war+插件+JDK21，~350MB）。
-  2. config.ini：[jenkins]（端口/job/admin）、[webhook] listen、[offline] deps_dir、[remote]（远端 bootstrap）。
-  3. config.local.ini（不入仓）：[secrets] webhook_secret + jenkins_admin_password。
-  4. 代码托管用内网现有仓库（不新建）；仓库后台配 WebHook 指向 webhook 适配器（见 C 段）。
+  1. 有网机：跑 server/deploy/fetch_offline.py 产出离线件到 tools/ci/offline/（jenkins_2.555.1_all.deb + 插件 + Java21 的 .deb）。
+  2. config.ini 客户端：[fetch]（版本/URL）、[remote]（远端 bootstrap）。
+  3. config.ini 服务端：[jenkins]（端口/job/admin）、[offline] deps_dir、[webhook] listen、[limits]。
+  4. config.local.ini（不入仓）：[secrets] webhook_secret + jenkins_admin_password。
+  5. 代码托管用内网现有仓库（不新建）；仓库后台配 WebHook 指向 webhook 适配器（见 C 段）。
 
 
 ▶ 本期要点
 ────────────────────────────────────────────────────────────
-  • 组件：webhook 适配器(触发) + Jenkins(JCasC 预配 job/串行/auto-cancel) + 官方 MCP 插件。
+  • 组件：webhook 适配器(触发) + Jenkins(.deb，JCasC 预配 job/串行/auto-cancel) + 官方 MCP 插件。
   • 仿真串行：numExecutors=1（固定，D-003；单节点同一时刻仅 1 个构建 = License 数）。
   • Jenkins 端口 8080、webhook 端口 8090，均仅限 80-90 / 443 / 8080-8090；认证头 X-Devcloud-Token。
-  • 离线可复现：WAR+插件+JDK 离线传入；JCasC 配置即代码；凭证不入仓（密钥经 config.local.ini）。git_auth=ssh。
+  • 离线：jenkins/java 的 .deb + 插件 离线传入，apt 安装；JCasC 配置即代码；凭证不入仓。git_auth=ssh。
 
 
-▶ 离线包获取（有网机，一次性）
+▶ 离线件获取（有网机，一次性）
 ────────────────────────────────────────────────────────────
-  F1  改 fetch_offline.py 顶部版本号为当前 LTS/发行版，下包+打包
+  F1  改 config.ini [fetch] 版本/URL 为内网可下版本，下 .deb+插件
       python3 server/deploy/fetch_offline.py
       ↳ 走代理：export HTTPS_PROXY=...
-  F2  产出 jenkins-offline.tar.gz 放到 [offline] deps_dir=/opt/ci/offline（或随 bootstrap 推送）
+  F2  Java：把 JDK/JRE 21 的 .deb 放进 tools/ci/offline/（[fetch] java_deb_url 为空时手动放）
+  F3  产出在 tools/ci/offline/（大文件已 .gitignore），随 bootstrap 推送或手动放到 deps_dir=/opt/ci/offline
 
 
 ▶ A. 首次远端 bootstrap（在执行机上，可选）
@@ -37,7 +39,7 @@
 
   A1  admin 连通性自检（SSH / 远端 python3 / 管理员权限）
       python3 local/admin/deploy_remote.py check
-  A2  SSH/SCP 推代码 + 离线包到远端 /opt/ci
+  A2  SSH/SCP 推代码 + offline/ 到远端 /opt/ci
       python3 local/admin/deploy_remote.py push
   A3  一条龙：check → push → 远程跑 deploy.py all
       python3 local/admin/deploy_remote.py all
@@ -46,11 +48,11 @@
 
 ▶ B. 服务器本地部署（需 root）
 ────────────────────────────────────────────────────────────
-  1   环境自检（root / git / systemctl / 端口范围 / 离线包就位）
+  1   环境自检（root / apt-get / dpkg / 端口范围 / 离线 .deb 就位）
       sudo python3 server/deploy/deploy.py check
-  2   解离线包 + 放插件 + 渲染 JCasC 到 JENKINS_HOME
+  2   apt 装 jenkins/java 的 .deb + 放插件 + 渲染 JCasC
       sudo python3 server/deploy/deploy.py init
-  3   写密钥环境文件 + 启用 systemd 服务（ci-jenkins + ci-webhook）
+  3   写密钥环境文件 + Jenkins systemd drop-in + 启用 jenkins/ci-webhook
       sudo python3 server/deploy/deploy.py service
 
   › 步骤 1-3 一条龙：sudo python3 server/deploy/deploy.py all。
@@ -69,7 +71,7 @@ push → 适配器校验 token+解析 payload → Jenkins buildWithParameters(GI
 
     Jenkins UI: http://<服务器IP>:8080/            # 构建列表/控制台日志/产物（admin 登录）
     适配器日志: journalctl -u ci-webhook -f
-    Jenkins 日志: journalctl -u ci-jenkins -f
+    Jenkins 日志: journalctl -u jenkins -f
 
 
 ▶ 开发端 MCP（官方 mcp-server 插件，接 opencode）
@@ -92,7 +94,7 @@ push → 适配器校验 token+解析 payload → Jenkins buildWithParameters(GI
   远端 bootstrap  python3 local/admin/deploy_remote.py all
   服务器一键部署  sudo python3 server/deploy/deploy.py all
   环境自检        sudo python3 server/deploy/deploy.py check
-  看服务状态      systemctl status ci-jenkins ci-webhook
+  看服务状态      systemctl status jenkins ci-webhook
   Jenkins UI      http://<host>:8080/
   一致性检查      python3 checks/consistency.py
   重新生成本文件  python3 gen_quick_deploy.py
@@ -102,7 +104,9 @@ push → 适配器校验 token+解析 payload → Jenkins buildWithParameters(GI
 
 ▶ 卸载 / 重置（停服务 + 清数据）
 ────────────────────────────────────────────────────────────
-    sudo systemctl disable --now ci-jenkins ci-webhook
-    sudo rm -f /etc/systemd/system/ci-jenkins.service /etc/systemd/system/ci-webhook.service /etc/ci-jenkins.env
+    sudo systemctl disable --now jenkins ci-webhook
+    sudo apt-get remove --purge -y jenkins                    # 卸 Jenkins（含 jenkins.service）
+    sudo rm -f /etc/systemd/system/ci-webhook.service /etc/ci-jenkins.env
+    sudo rm -rf /etc/systemd/system/jenkins.service.d         # 删端口/JCasC drop-in
     sudo systemctl daemon-reload
-    sudo rm -rf /opt/ci/jenkins_home /opt/ci/jenkins-offline   # 删 JENKINS_HOME + 解包（谨慎，不可恢复）
+    sudo rm -rf /var/lib/jenkins                              # 删 JENKINS_HOME（谨慎，不可恢复）

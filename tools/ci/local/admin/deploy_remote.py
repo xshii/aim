@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # implements: FR-16, FR-18
-"""远端首次部署 bootstrap（role=local/admin：从执行机经 SSH/SCP，python3 标准库）。CI 框架=Jenkins（D-016）。
-把全量 tools/ci 代码 + Jenkins 离线包（[offline] deps_dir/package）推到目标机，再经 SSH 远程执行
+"""远端首次部署 bootstrap（role=local/admin：从执行机经 SSH/SCP，python3 标准库）。CI 框架=Jenkins（.deb）。
+把全量 tools/ci 代码（含 offline/ 下的 .deb+插件）推到目标机，再经 SSH 远程执行
 server/deploy/deploy.py all（非 root 自动 sudo）。ssh 私钥留 ~/.ssh（C-1, D-009）。
 
 在执行机上：
   python3 deploy_remote.py check   # admin 连通性自检（SSH/远端 python3/管理员权限）
-  python3 deploy_remote.py push    # scp 代码 + 离线包到远端
+  python3 deploy_remote.py push    # scp 代码 + offline/ 到远端
   python3 deploy_remote.py all     # check → push → 远端 deploy.py all
-缺地址即停（C-10）。离线包先在有网机跑 server/deploy/fetch_offline.py 产出。"""
+缺地址即停（C-10）。离线件先在有网机跑 server/deploy/fetch_offline.py 产出到 tools/ci/offline/。"""
 import argparse
 import glob
 import os
@@ -45,23 +45,14 @@ def step_check():
 def step_push(cfg):
     user, host, port, dest, opts = _remote(cfg)
     target = ("%s@%s" % (user, host)) if user else host
-    deps = ci_config.expand(ci_config.get(cfg, "offline", "deps_dir", "/opt/ci/offline"))
-    ci_config.run(connectivity.ssh_cmd(user, host, port, opts) + ["mkdir", "-p", dest, deps])
+    ci_config.run(connectivity.ssh_cmd(user, host, port, opts) + ["mkdir", "-p", dest])
     scp = ["scp", "-r", "-P", str(port)] + (opts.split() if opts.strip() else [])
-    # 推 CI 代码（排除缓存与本地敏感配置）
+    # 推全量 CI 代码 + offline/ 离线件（.deb/插件随 offline/ 目录一起；排除缓存与本地敏感配置）
     code = [p for p in glob.glob(os.path.join(CI_ROOT, "*"))
             if os.path.basename(p) not in ("__pycache__", "config.local.ini")]
     ci_config.run(scp + code + ["%s:%s/" % (target, dest)])
-    print("[push] 代码已推送到 %s:%s" % (target, dest))
-    # 推 Jenkins 离线包（有网机 fetch_offline.py 产出）；本地缺则提示（远端 deploy.py check 会拦，C-10）。
-    pkg = os.path.join(deps, ci_config.get(cfg, "offline", "package", "jenkins-offline.tar.gz"))
-    if os.path.isfile(pkg):
-        ci_config.run(["scp", "-P", str(port)] + (opts.split() if opts.strip() else [])
-                      + [pkg, "%s:%s/" % (target, deps)])
-        print("[push] 离线包已推送到 %s:%s" % (target, deps))
-    else:
-        print("[push] 注意：本地无离线包 %s（先在有网机跑 fetch_offline.py）；"
-              "若已在远端可忽略。" % pkg)
+    print("[push] 代码 + offline/ 已推送到 %s:%s" % (target, dest))
+    print("[push] 离线 .deb 落地 %s/offline（确认 config.ini [offline] deps_dir 与此一致）" % dest)
 
 
 def step_remote_deploy(cfg):
@@ -72,7 +63,7 @@ def step_remote_deploy(cfg):
     cmd = connectivity.ssh_cmd(user, host, port, opts, tty=True) + \
         ["cd %s && %spython3 server/deploy/deploy.py all" % (dest, prefix)]
     ci_config.run(cmd)
-    print("[remote] 已在 %s 执行 deploy.py all（Jenkins：解包 + JCasC + systemd 服务）。" % host)
+    print("[remote] 已在 %s 执行 deploy.py all（Jenkins：apt 装 .deb + JCasC + systemd）。" % host)
 
 
 def main():
