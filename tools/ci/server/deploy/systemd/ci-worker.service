@@ -1,0 +1,11 @@
+[Unit]
+Description=CI evaluation worker (serial)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 @@CI_ROOT@@/server/scheduler/worker.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
