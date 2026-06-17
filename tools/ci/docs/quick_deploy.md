@@ -1,104 +1,97 @@
 ════════════════════════════════════════════════════════════
- Quick Deploy · CI 部署速查
+ Quick Deploy · 自研 CI 调度器
 ════════════════════════════════════════════════════════════
 
   › 自动生成（gen_quick_deploy.py 依据 config.ini），改配置后重跑。
 
-  › 部署两段式：首次执行机 SSH/SCP bootstrap（admin）→ 服务器本地跑 deploy.py（server）。
+  › 纯 python3 标准库调度器，替代 GitLab（D-013）：webhook 入队 → 单 worker 串行 checkout+评测 → sqlite → MCP/网页查。
 
 
 ▶ 准备
 ────────────────────────────────────────────────────────────
-  1. 非敏感配置填 config.ini：[server] host、[offline] deps_dir、(远端) [remote]、(webhook) [webhook]。
-  2. 敏感项填 config.local.ini（复制 config.local.ini.example，不入仓）：[proxy] 代理、[secrets] 密钥。
-  3. 离线依赖放到 <部署目录>/offline（deps_dir 留空时）（见 OFFLINE_DEPENDENCIES.md）；或 [fetch] mode=auto 经代理自动下载。
+  1. config.ini：[scheduler]（db/工作区/concurrency/git_auth）、[webhook] listen、[remote]（远端 bootstrap）。
+  2. config.local.ini（不入仓）：[secrets] webhook_secret；[scheduler] ssh_key 或 http_token（git checkout 用）。
+  3. 代码托管用内网现有仓库（不新建）；仓库后台配 WebHook 指向本服务（见 C 段）。
 
 
 ▶ 本期要点
 ────────────────────────────────────────────────────────────
-  • 部署两段式：首次 SSH/SCP 远端 bootstrap（D-010），之后服务器本地直跑（D-008），日常 HTTP 触发。
-  • GitLab 端口探测：从候选 8929,9080,9443,18080,28080 探测空闲端口锁定，避开被占用端口。
-  • CI 验证预生成代码：多种验证（合一 check.py）+ 收集 output/状态；运行型仅超时(120s)+资源限制。
-  • 凭证不入仓：私钥留 ~/.ssh；密钥/token/代理密码经 env 或 config.local.ini。
+  • 组件：webhook 接收器(+只读 UI) + 单 worker 串行调度 + sqlite 任务库 + MCP（接 opencode）。
+  • 仿真串行：concurrency=1（单 worker 天然串行 = License 数）。
+  • webhook 端口仅限 80-90 / 443 / 8080-8090；认证头 X-Devcloud-Token（平台固定，见 constants.py）。
+  • 纯标准库零依赖、内网离线；凭证不入仓（ssh_key/token/密钥经 config.local.ini）。git_auth=ssh。
 
 
-▶ A. 首次远端 bootstrap（在执行机上，新机首搭）
+▶ A. 首次远端 bootstrap（在执行机上，可选）
 ────────────────────────────────────────────────────────────
-  › 当前 [remote] host = (未配置)，[fetch] mode = manual。host 为空表示不启用远端、直接看 B 段。
+  › 当前 [remote] host = (未配置)。host 为空 = 不用远端，直接在服务器跑 B 段。
 
-  A1  admin 连通性自检（SSH / 远端 python3 / GitLab）
+  A1  admin 连通性自检（SSH / 远端 python3 / 管理员权限）
       python3 local/admin/deploy_remote.py check
-  A2  fetch=auto 时经代理下载依赖到本地 deps_dir
-      python3 local/admin/deploy_remote.py fetch
-  A3  SSH/SCP 推代码 + 依赖到远端 dest
+  A2  SSH/SCP 推代码到远端 /opt/ci（纯 python，无 .deb）
       python3 local/admin/deploy_remote.py push
-  A4  一条龙：check → fetch → push → 远程跑 deploy.py all（含装 GitLab + 全自动 Runner）
+  A3  一条龙：check → push → 远程跑 deploy.py all
       python3 local/admin/deploy_remote.py all
-      ↳ 经 ssh -tt 远程执行；非 root 用户先输 sudo 密码，再手输 GitLab root 密码（回车默认 88888888）
+      ↳ 非 root 用户经 ssh -tt 交互输 sudo 密码
 
 
-▶ B. 服务器本地部署（代码到位后在服务器上执行）
+▶ B. 服务器本地部署（需 root）
 ────────────────────────────────────────────────────────────
-  1   环境自检（python3 / dpkg / 依赖）
-      cd /opt/ci && python3 server/deploy/deploy.py check
-  2   探测并锁定 GitLab 端口（写回 config）
-      python3 server/deploy/deploy.py port
-  3   离线装 GitLab，过程中交互手输 root 初始密码（回车默认 88888888，≥8 位）
-      python3 server/deploy/deploy.py gitlab
-  4   全自动注册 Runner，concurrent=1（gitlab-rails 建项目+签 token，GitLab 16+ 新流程）
-      python3 server/deploy/deploy.py runner
-      ↳ 手动 fallback：deploy.py runner --token <glrt->
-  5   浏览器打开 http://<本机IP，部署时自动锁定>:<锁定端口>，用 root + 手输的密码登录（首登后尽快改密）
-  6   推送含 .gitlab-ci.yml 的仓库，触发流水线（含 qsort 冒烟）
+  1   环境自检（python3 / git / systemctl / root / webhook 端口范围）
+      sudo python3 server/deploy/deploy.py check
+  2   初始化 sqlite + 工作区/日志目录
+      sudo python3 server/deploy/deploy.py init
+  3   安装并启用 systemd 服务（ci-webhook + ci-worker）
+      sudo python3 server/deploy/deploy.py service
 
-  › 步骤 1-4 可一条龙：python3 server/deploy/deploy.py all（= check + host + port + gitlab + runner）。
-
-  › deploy.py 需 root：非 root 用户命令前加 sudo（sudo python3 …，脚本会自检拦截）；root 直接运行。
+  › 步骤 1-3 一条龙：sudo python3 server/deploy/deploy.py all。
 
 
-▶ 触发构建（webhook / token，HTTP 直连）
+▶ C. 接入内网代码仓 WebHook
 ────────────────────────────────────────────────────────────
-详见 server/webhook/README.md。git push 自动触发；或 curl + trigger token：
+  1. 仓库后台 → WebHook → URL 填 http://<服务器IP>:8080/
+  2. Token 填共享密钥（= config.local.ini [secrets] webhook_secret），平台据此发 X-Devcloud-Token 头。
+  3. 订阅事件：Push Hook。push 即触发评测。
 
-    curl -X POST -F token=<TRIGGER_TOKEN> -F ref=main \
-      http://<本机IP，部署时自动锁定>:<port>/api/v4/projects/<id>/trigger/pipeline
 
-
-▶ 开发端查 CI 状态 / 拉日志（MCP，接 opencode）
+▶ 触发与查看结果
 ────────────────────────────────────────────────────────────
-标准 MCP（stdio）local/mcp/ci_control_server.py 直连 GitLab API，凭证用环境变量：
+push 代码 → 平台 POST webhook → 入队 → worker 串行 checkout+评测 → 存 sqlite。查看：
 
-    GITLAB_API=http://<本机IP，部署时自动锁定>:<port>/api/v4 GITLAB_TOKEN=<token> GITLAB_PROJECT=<id> \
-      python3 local/mcp/ci_control_server.py
+    浏览器:   http://<服务器IP>:8080/            # 任务列表/详情/日志（只读）
+    命令行:   curl http://<服务器IP>:8080/tasks/<id>/log
+    服务日志: journalctl -u ci-webhook -u ci-worker -f
 
-  › 工具：get_pipeline_status / list_pipelines / get_job_log。opencode 接入见 local/mcp/opencode.json.example。
 
-
-▶ qsort 冒烟（验证 CI 真实可用）
+▶ 开发端 MCP（接 opencode）查任务状态/日志
 ────────────────────────────────────────────────────────────
-    python3 server/demo/qsort/smoke_qsort.py     # 编译→限制运行→比对，期望 5/5 通过
+    CI_DB_PATH=/opt/ci/var/ci.db python3 local/mcp/ci_control_server.py
+
+  › 工具：get_task_status / list_tasks / get_task_log。opencode 接入见 local/mcp/opencode.json.example。
+
+
+▶ 端到端 demo（验证链路）
+────────────────────────────────────────────────────────────
+    python3 server/scheduler/smoke_scheduler.py   # 建临时仓 → 入队 → checkout → 编译 qsort+比对 → passed
 
 
 ▶ 命令速查
 ────────────────────────────────────────────────────────────
-  远端连通性自检      python3 local/admin/deploy_remote.py check
-  远端一键 bootstrap  python3 local/admin/deploy_remote.py all
-  服务器自检          python3 server/deploy/deploy.py check
-  探测端口            python3 server/deploy/deploy.py port
-  看锁定端口          python3 server/deploy/probe_port.py --show
-  服务器一键          python3 server/deploy/deploy.py all  # check+host+port+gitlab+runner
-  注册 Runner         python3 server/deploy/deploy.py runner   # 全自动；--token glrt- 手动
-  一致性检查          python3 checks/consistency.py
-  重新生成本文件      python3 gen_quick_deploy.py
+  远端 bootstrap  python3 local/admin/deploy_remote.py all
+  服务器一键部署  sudo python3 server/deploy/deploy.py all
+  环境自检        sudo python3 server/deploy/deploy.py check
+  看服务状态      systemctl status ci-webhook ci-worker
+  看任务(网页)    http://<host>:8080/
+  端到端 demo     python3 server/scheduler/smoke_scheduler.py
+  一致性检查      python3 checks/consistency.py
+  重新生成本文件  python3 gen_quick_deploy.py
 
-  › 仿真并发：1（串行）。运行超时：120s。GitLab 候选端口：8929,9080,9443,18080,28080。
+  › 仿真并发：1（单 worker 串行）。运行超时：120s。webhook 端口白名单：80-90/443/8080-8090。
 
 
-▶ 卸载 / 重置 GitLab（危险：删除全部数据，不可恢复）
+▶ 卸载 / 重置（停服务 + 清数据）
 ────────────────────────────────────────────────────────────
-    sudo gitlab-ctl uninstall                    # 停止并禁用所有服务（保留数据）
-    sudo gitlab-runner unregister --all-runners  # 注销 Runner（可选）
-    sudo apt-get remove --purge -y gitlab-ce gitlab-runner   # 卸载软件包
-    sudo rm -rf /etc/gitlab /var/opt/gitlab /var/log/gitlab /opt/gitlab /etc/gitlab-runner
-
-  › 删净后可重新 deploy.py all 全新部署；换端口先清空 config.ini [gitlab] http_port。
+    sudo systemctl disable --now ci-webhook ci-worker
+    sudo rm -f /etc/systemd/system/ci-webhook.service /etc/systemd/system/ci-worker.service
+    sudo systemctl daemon-reload
+    rm -rf /opt/ci/var      # 删 sqlite/工作区/日志（谨慎，不可恢复）
