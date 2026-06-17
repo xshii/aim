@@ -1,95 +1,103 @@
 #!/usr/bin/env python3
-# implements: FR-19
-"""
-内源托管 webhook 接收器（role=server/webhook，Python 3.8 标准库 http.server，零依赖）。
-接受内部代码托管站的入站 webhook：校验请求头共享密钥（默认 X-Auth-Token，常量时间比较）→
-经 GitLab trigger token 触发对应流水线。与 GitLab 同机部署，转发本地 GitLab API。
-共享密钥(WEBHOOK_SECRET)与 trigger token(GITLAB_TRIGGER_TOKEN) 不入仓（env / config.local.ini，C-1）。
-用法: python3 server/webhook/receiver.py（凭证经环境变量或 config.local.ini 注入）
-"""
+# implements: FR-14, FR-19
+"""webhook 接收器 + 查询接口（role=server/webhook，python3 标准库）。同一受限端口：
+- POST /              ：X-Auth-Token 校验 → 解析 repo/ref → 入队 sqlite，返回 task id 与查询地址。
+- GET /tasks/<id>     ：查任务状态（json）。
+- GET /tasks/<id>/log ：查任务日志。
+GET/POST 均校验 X-Auth-Token（日志含代码/路径，内网亦须认证，C-1）。密钥不入仓
+（env WEBHOOK_SECRET 或 config.local.ini [secrets]）。监听端口受限 80-90/443/8080-8090，见 03 设计。"""
 import hmac
+import json
 import os
 import sys
-import urllib.parse
-import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-_R = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.abspath(__file__))
+_R = HERE
 while _R != "/" and not os.path.isfile(os.path.join(_R, "ci_config.py")):
     _R = os.path.dirname(_R)
 sys.path.insert(0, _R)
+sys.path.insert(0, os.path.join(_R, "server", "scheduler"))
 import ci_config  # noqa: E402
+import db          # noqa: E402
 
-CFG = ci_config.load()
-
-
-def _g(key, default=""):
-    return ci_config.get(CFG, "webhook", key, default)
-
-
-AUTH_HEADER = _g("auth_header", "X-Auth-Token")
-SECRET = ci_config.secret("WEBHOOK_SECRET", CFG)
-TRIGGER_TOKEN = ci_config.secret("GITLAB_TRIGGER_TOKEN", CFG)
-REF = _g("ref", "main")
-PROJECT = _g("project_id", "")
-# 内网 GitLab 走 HTTP 直连，不经任何代理（D-008）；屏蔽环境里的 HTTP(S)_PROXY。
-_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_CFG = ci_config.load()
+AUTH_HEADER = ci_config.get(_CFG, "webhook", "auth_header", "X-Auth-Token")
+SECRET = ci_config.secret("WEBHOOK_SECRET", _CFG, "secrets", "webhook_secret")
+DB_PATH = os.environ.get("CI_DB_PATH") or ci_config.expand(
+    ci_config.get(_CFG, "scheduler", "db_path", os.path.join(_R, "var/ci.db")))
 
 
-def trigger_url():
-    """GitLab trigger API：env GITLAB_API 优先，否则由 [server].host + [gitlab].http_port 组装。"""
-    api = os.environ.get("GITLAB_API", "").rstrip("/")
-    if not api:
-        host = ci_config.get(CFG, "server", "host", "").strip()
-        port = ci_config.get(CFG, "gitlab", "http_port", "").strip()
-        if not (host and port):
-            raise RuntimeError("缺 GITLAB_API 或 server.host/gitlab.http_port（C-10）。")
-        api = "http://%s:%s/api/v4" % (host, port)
-    if not PROJECT:
-        raise RuntimeError("缺 [webhook] project_id（C-10）。")
-    return "%s/projects/%s/trigger/pipeline" % (api, urllib.parse.quote(str(PROJECT), safe=""))
+def _parse(body):
+    """从 payload 取 repo/ref。通用 repo/ref；真实内网平台 payload 字段在此适配。"""
+    d = json.loads(body or "{}")
+    return d.get("repo", ""), d.get("ref", "main")
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _reply(self, code, msg):
+    def _auth_ok(self):
+        return bool(SECRET) and hmac.compare_digest(self.headers.get(AUTH_HEADER, ""), SECRET)
+
+    def _reply(self, code, msg, ctype="text/plain; charset=utf-8"):
         self.send_response(code)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Type", ctype)
         self.end_headers()
         self.wfile.write(msg.encode("utf-8"))
 
     def do_POST(self):
-        if not SECRET:
-            return self._reply(500, "server 未配置 WEBHOOK_SECRET\n")
-        if not hmac.compare_digest(self.headers.get(AUTH_HEADER, ""), SECRET):
+        if not self._auth_ok():
             return self._reply(401, "unauthorized\n")
         length = int(self.headers.get("Content-Length", 0) or 0)
-        if length:
-            self.rfile.read(length)                 # 丢弃 body（共享密钥模式不解析）
-        if not TRIGGER_TOKEN:
-            return self._reply(500, "server 未配置 GITLAB_TRIGGER_TOKEN\n")
-        data = urllib.parse.urlencode({"token": TRIGGER_TOKEN, "ref": REF}).encode()
+        body = self.rfile.read(length).decode("utf-8") if length else ""
         try:
-            with _DIRECT.open(trigger_url(), data=data, timeout=15) as r:
-                self._reply(202, "triggered: HTTP %s\n" % r.getcode())
-        except Exception as e:  # noqa  含配置错误(RuntimeError)与网络错误，统一返回而不崩溃服务
-            self._reply(502, "trigger failed: %s\n" % e)
+            repo, ref = _parse(body)
+            if not repo:
+                return self._reply(400, "missing repo\n")
+            tid = db.enqueue(DB_PATH, repo, ref)
+            self._reply(202, "queued: task %d\n  状态: GET /tasks/%d\n  日志: GET /tasks/%d/log\n"
+                        % (tid, tid, tid))
+        except Exception as e:  # noqa: BLE001
+            self._reply(500, "enqueue failed: %s\n" % e)
 
-    def log_message(self, fmt, *a):                 # 不打印请求头，避免泄露鉴权信息
-        sys.stderr.write("[webhook] " + (fmt % a) + "\n")
+    def do_GET(self):
+        if not self._auth_ok():
+            return self._reply(401, "unauthorized\n")
+        if not self.path.startswith("/tasks/"):
+            return self._reply(404, "not found\n")
+        rest = self.path[len("/tasks/"):]
+        want_log = rest.endswith("/log")
+        id_str = rest[:-4] if want_log else rest
+        try:
+            tid = int(id_str)
+        except ValueError:
+            return self._reply(400, "bad task id\n")
+        row = db.get(DB_PATH, tid)
+        if not row:
+            return self._reply(404, "no such task\n")
+        if want_log:
+            lp = row.get("log_path")
+            if not lp or not os.path.exists(lp):
+                return self._reply(404, "no log\n")
+            with open(lp, encoding="utf-8", errors="replace") as f:
+                return self._reply(200, f.read())
+        return self._reply(200, json.dumps(row, ensure_ascii=False) + "\n",
+                           "application/json; charset=utf-8")
+
+    def log_message(self, *a):
+        pass
+
+
+def build_server(host, port):
+    db.init(DB_PATH)
+    return HTTPServer((host, int(port)), Handler)
 
 
 def main():
-    if _g("enabled", "false").lower() != "true":
-        raise SystemExit("[webhook] enabled=false（改 config.ini [webhook] enabled=true 启用）。")
-    try:
-        trigger_url()                               # 启动即校验触发目标，缺配置 fail-fast（C-10）
-    except RuntimeError as e:
-        raise SystemExit(str(e))
-    listen = _g("listen", "0.0.0.0:9100")
-    host, _, port = listen.partition(":")
-    srv = HTTPServer((host, int(port or 9100)), Handler)
-    print("[webhook] 监听 %s，鉴权头 %s（共享密钥）→ 触发 GitLab ref=%s" % (listen, AUTH_HEADER, REF))
-    srv.serve_forever()
+    host, _, port = ci_config.get(_CFG, "webhook", "listen", "0.0.0.0:8080").partition(":")
+    httpd = build_server(host, int(port))
+    print("[webhook] 监听 %s:%s（X-Auth-Token 校验；POST 入队 / GET 查状态日志）db=%s"
+          % (host, port, DB_PATH))
+    httpd.serve_forever()
 
 
 if __name__ == "__main__":

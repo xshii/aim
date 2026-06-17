@@ -105,12 +105,17 @@ loop:
 - `concurrency`（config，默认 1）：单 worker = 仿真串行（FR-3）。N License → systemd 起 N 个 worker 实例；`claim()` 的 `BEGIN IMMEDIATE` 保证不重复取。
 - 经 systemd 守护，崩溃自动重启；重启时 `reset_stale()` 清悬挂。
 
-### 4.3 webhook 接收器 `server/webhook/receiver.py`（改造）
+### 4.3 webhook 接收器 + 查询接口 `server/webhook/receiver.py`（改造）
 
-- 保留：请求头 **`X-Auth-Token`** 共享密钥常量时间校验（`hmac.compare_digest`）。认证头名**固定为 `X-Auth-Token`**（内网托管平台约定），共享密钥放 `config.local.ini`（不入仓，C-1）。
-- 改：校验通过后，从 payload 解析 `repo` 与 `ref` → `db.enqueue()` → 返回 202。
-- 删：原「转发 GitLab trigger token」逻辑。
-- payload 解析按托管平台格式（Bitbucket/SVN/自研）适配；字段映射经 config 配置键名，避免硬编码。
+同一 HTTP 服务（同一受限端口）提供触发与查询，均校验 **`X-Auth-Token`**（`hmac.compare_digest`；日志含代码/路径，内网亦须认证，C-1）：
+
+- `POST /`：校验 → 从 payload 解析 `repo`/`ref` → `db.enqueue()` → 返回 **202** + task id + 查询地址（删原「转发 GitLab trigger」逻辑）。
+- `GET /tasks/<id>`：返回任务状态（json：state/exit_code/时间戳）。
+- `GET /tasks/<id>/log`：返回任务日志全文。
+
+webhook 异步：POST 立即返回 task id（评测异步跑），触发方/人之后用 GET 查状态与日志；MCP 查同一 sqlite（给 opencode/AI）。payload 字段映射在 `_parse()` 适配真实平台格式（Bitbucket/SVN/自研）。
+
+**（可选，后续）回写代码仓**：若内网仓提供 commit status API，worker 完成后可 POST 回写 ✅/❌——需该 API 地址+认证，本期不做，留扩展点。
 
 ### 4.4 checkout `server/scheduler/checkout.py`（新增）
 
