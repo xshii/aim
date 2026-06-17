@@ -5,5 +5,5 @@ git                     # SCM：checkout 被测仓库
 workflow-aggregator     # Pipeline（pipeline-as-code，含 declarative）
 configuration-as-code   # JCasC：离线可复现声明式配置（admin/job/串行/MCP）
 job-dsl                 # JCasC 用 job-dsl 建 qsort pipeline job
-throttle-concurrents    # 串行类别（仿真 License=1，多节点时限并发；单节点由 numExecutors=1 兜底）
+throttle-concurrents    # 仿真并发类别（每仿真器一个，限各自 license）；JCasC 定义 + 仿真 job throttle 引用
 mcp-server              # 官方 MCP：暴露 job/build 为 MCP tools，接 opencode

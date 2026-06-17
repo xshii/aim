@@ -16,7 +16,7 @@
 - Jenkins 离线部署（内网无外网，jenkins/java 的 .deb apt 安装；插件从内源 UC；JCasC 可复现配置）
 - 接内部开源 webhook（X-Devcloud-Token + push payload）触发评测
 - 评测 qsort 功能 + 性能（复用 `eval.py`）
-- 仿真串行（并发=License 数）
+- 仿真按 license 限并发（同仿真器串行、不同仿真器可并行）
 - auto-cancel（同分支新提交取消旧构建）
 - MCP 查 job/build（接 opencode）
 
@@ -40,7 +40,7 @@
 │ Jenkins job (Jenkinsfile)     │ git checkout <sha>
 │  options: disableConcurrent-  │ → sh: python3 eval.py .  (功能+性能)
 │    Builds(abortPrevious)       │ → archiveArtifacts qsort_eval.json
-│  throttle/lock: 串行           │ → 结果(成功/失败)
+│  throttle: 按仿真器限并发      │ → 结果(成功/失败)
 └─────────────┬────────────────┘
               ▼
    Jenkins Web UI(自带) / MCP 插件(接 opencode)
@@ -52,12 +52,12 @@
 
 ### 4.1 离线部署 `server/deploy/`
 - **离线件获取**（有网机器，一次性）：`fetch_offline.py`（读 `config.ini [fetch]` 版本/URL）—— 下 jenkins `.deb` + plugin-cli 工具 jar，产出到 `tools/ci/local/offline/`；Java21 的 `.deb` 一并放入。**插件不离线传**，由服务器从内源 UC 装。
-- **插件清单** `plugins.txt`：`git`、`workflow-aggregator`(pipeline)、`configuration-as-code`(JCasC)、`throttle-concurrents`(串行)、`mcp-server`(MCP) 及其依赖（工具自动解）。
+- **插件清单** `plugins.txt`：`git`、`workflow-aggregator`(pipeline)、`configuration-as-code`(JCasC)、`job-dsl`(建 job)、`throttle-concurrents`(仿真并发类别)、`mcp-server`(MCP) 及其依赖（工具自动解）。
 - **部署** `deploy.py`（在内网服务器，需 root）：`apt-get install ./offline/*.deb`（jenkins+java 一起，apt 解依赖）、用 plugin-cli 从内源 UC（`[jenkins] update_center_url`）按 `plugins.txt` 装插件到 `/var/lib/jenkins/plugins`、渲染 JCasC `jenkins.yaml`、写 systemd drop-in 覆盖 deb 自带的 `jenkins.service`（端口/JCasC/admin 密码）、启用。webhook 适配器同机起 `ci-webhook.service`。
 - 端口：Jenkins 与 webhook 适配器端口仍受白名单约束（80-90/443/8080-8090），`deploy.py check` 校验。
 
 ### 4.2 JCasC 配置 `server/deploy/jenkins.yaml`
-Configuration-as-Code 声明式预配（离线可复现，免手动点 UI）：admin 用户、跳过 setup wizard、qsort job(pipeline from SCM 或内联 Jenkinsfile)、throttle 串行类别、API token（供适配器调用）。
+Configuration-as-Code 声明式预配（离线可复现，免手动点 UI）：admin 用户、跳过 setup wizard、qsort job(内联 pipeline)、numExecutors(总并行)、throttle 仿真并发类别（每仿真器一个）。
 
 ### 4.3 webhook 适配器 `server/webhook/receiver.py`（重写）
 - 保留：`X-Devcloud-Token`（`hmac.compare_digest`）+ `_parse()`（`project.git_ssh_url`/`checkout_sha`/分支）。
@@ -78,7 +78,7 @@ pipeline {
   post { always { archiveArtifacts artifacts: 'qsort_eval.json', allowEmptyArchive: true } }
 }
 ```
-串行：throttle-concurrents 全局/类别限 1（=License 数），或 `lockable-resources` 锁 `sim-license`。
+并发：每个仿真器一个 throttle-concurrents 类别（`maxConcurrentTotal`=该仿真器 license 数），仿真 job 用 `throttle(['<类别>'])` 引用 → 同仿真器串行/限并发、不同仿真器并行；`numExecutors`=总并行（可配）。qsort demo 无仿真器，不 throttle。
 
 ### 4.5 MCP
 官方 `mcp-server-plugin`（装上自动暴露 job/build 为 MCP tools）。opencode 经 MCP 客户端连 Jenkins MCP 端点。无需自写。

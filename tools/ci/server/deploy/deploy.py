@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # implements: FR-9, FR-11
 """Jenkins 离线部署（.deb + apt，role=server/deploy，python3 标准库）。需 root。
-离线件（jenkins/java 的 .deb + plugins/）由有网机 fetch_offline.py 产出，放 [offline] deps_dir。
+离线件（jenkins/java 的 .deb + plugin-cli jar）由有网机 fetch_offline.py 产出，放 [offline] deps_dir；
+插件由本脚本用 plugin-cli 从内源 Update Center（[jenkins] update_center_url）装到 /var/lib/jenkins/plugins。
   sudo python3 deploy.py all     # check → init(apt 装 deb + 内源 UC 装插件 + JCasC) → service(systemd)
 或分步：check / init / service
 宪法：遇缺失即停（C-10）；参数来自 config.ini，密钥来自 config.local.ini（C-7, C-1）。"""
@@ -125,10 +126,12 @@ def step_init():
     admin = ci_config.get(cfg, "jenkins", "admin_user", "admin")
     job = ci_config.get(cfg, "jenkins", "job_name", "qsort-eval")
     port = _port(cfg, "jenkins", "http_port", "8080")
+    execs = ci_config.get(cfg, "jenkins", "executors", "4")
     with open(os.path.join(HERE, "jenkins.yaml"), encoding="utf-8") as fp:
         casc = (fp.read().replace("@@ADMIN_USER@@", admin)
                 .replace("@@HTTP_PORT@@", str(port))
                 .replace("@@JOB_NAME@@", job)
+                .replace("@@EXECUTORS@@", execs)
                 .replace("@@CI_TOOLING@@", CI_ROOT))
     with open(CASC, "w", encoding="utf-8") as fp:
         fp.write(casc)

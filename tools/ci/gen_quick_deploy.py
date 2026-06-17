@@ -78,6 +78,7 @@ def build_blocks(cfg):
     jport = g("jenkins", "http_port", "8080")
     job = g("jenkins", "job_name", "qsort-eval")
     admin = g("jenkins", "admin_user", "admin")
+    execs = g("jenkins", "executors", "4")
     wport = g("webhook", "listen", "0.0.0.0:8090").rsplit(":", 1)[-1]
     git_auth = g("webhook", "git_auth", "ssh")
     deps = g("offline", "deps_dir", "/opt/ci/local/offline")
@@ -103,7 +104,7 @@ def build_blocks(cfg):
         ("h2", "本期要点"),
         ("ul", [
             "组件：webhook 适配器(触发) + Jenkins(.deb，JCasC 预配 job/串行/auto-cancel) + 官方 MCP 插件。",
-            "仿真串行：numExecutors=1（固定，D-003；单节点同一时刻仅 1 个构建 = License 数）。",
+            "仿真并发：numExecutors=%s（总并行，可配）；每仿真器一个 throttle 类别限其 license——同仿真器串行、不同仿真器并行（D-003）。" % execs,
             "Jenkins 端口 %s、webhook 端口 %s，均仅限 80-90 / 443 / 8080-8090；认证头 X-Devcloud-Token。" % (jport, wport),
             "离线：jenkins/java 的 .deb apt 安装；插件由服务器从内源 UC 装；JCasC 配置即代码；凭证不入仓。git_auth=%s。" % git_auth,
         ]),
@@ -178,8 +179,8 @@ def build_blocks(cfg):
             ("一致性检查", "python3 checks/consistency.py"),
             ("重新生成本文件", "python3 gen_quick_deploy.py"),
         ]),
-        ("note", "仿真并发：numExecutors=1（串行，D-003）。admin 用户：%s。端口白名单：80-90/443/8080-8090。"
-                 % admin),
+        ("note", "仿真并发：numExecutors=%s（总并行）；单仿真器由 throttle 类别限其 license（D-003）。admin：%s。端口白名单：80-90/443/8080-8090。"
+                 % (execs, admin)),
 
         ("h2", "卸载 / 重置（停服务 + 清数据）"),
         ("code", [

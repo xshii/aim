@@ -18,7 +18,7 @@ token + JSONPath 繁琐且多一个插件依赖。
   校验 token(hmac.compare_digest) → _parse(repo/sha/branch)
   → POST http://127.0.0.1:<jenkins端口>/job/<job>/buildWithParameters?GIT_URL=..&GIT_SHA=..&BRANCH=..
      (Basic Auth: admin + JENKINS_ADMIN_PASSWORD；先取 CSRF crumb，同会话)
-  → Jenkins job 串行执行(numExecutors=1) + auto-cancel(disableConcurrentBuilds abortPrevious)
+  → Jenkins job 执行（仿真 job 按 throttle 类别限并发）+ auto-cancel(disableConcurrentBuilds abortPrevious)
 ```
 
 幂等 / auto-cancel 交给 Jenkins job（同分支新构建取消旧的）；适配器只校验+触发，不维护状态。

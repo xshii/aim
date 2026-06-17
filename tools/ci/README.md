@@ -91,6 +91,6 @@ Jenkins pipeline 的评测 stage 即 `python3 eval.py .`（被测仓库根含 ev
 - **CI 框架 Jenkins**（D-016）：标准特性开箱（pipeline-as-code、auto-cancel、Web UI、官方 MCP 插件）；
   .deb + apt 离线安装（jenkins/java 的 .deb；插件从内源 UC；JCasC 配置即代码 D-018）。
 - **webhook 适配器**（D-017）：内源 X-Devcloud-Token 头 + 复杂 payload，复用已验证校验/解析，解耦 Jenkins。
-- **仿真严格串行**（D-003）：Jenkins `numExecutors=1`（单节点同一时刻仅 1 个构建 = License 数）。
+- **仿真按 license 限并发**（D-003）：每仿真器一个 throttle 类别（限其 license 数）→ 同仿真器串行、不同仿真器并行；`numExecutors`=总并行（可配 `[jenkins] executors`）。
 - **凭证不入仓**（C-1/D-009）：私钥留 ~/.ssh；webhook 密钥/Jenkins admin 密码经 env 或 `config.local.ini`。
 - **纯 python3 标准库**：适配器/部署/取包脚本无第三方依赖；Jenkins 本体离线传入。

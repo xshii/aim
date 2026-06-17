@@ -19,7 +19,7 @@
 ▶ 本期要点
 ────────────────────────────────────────────────────────────
   • 组件：webhook 适配器(触发) + Jenkins(.deb，JCasC 预配 job/串行/auto-cancel) + 官方 MCP 插件。
-  • 仿真串行：numExecutors=1（固定，D-003；单节点同一时刻仅 1 个构建 = License 数）。
+  • 仿真并发：numExecutors=4（总并行，可配）；每仿真器一个 throttle 类别限其 license——同仿真器串行、不同仿真器并行（D-003）。
   • Jenkins 端口 8080、webhook 端口 8090，均仅限 80-90 / 443 / 8080-8090；认证头 X-Devcloud-Token。
   • 离线：jenkins/java 的 .deb apt 安装；插件由服务器从内源 UC 装；JCasC 配置即代码；凭证不入仓。git_auth=ssh。
 
@@ -99,7 +99,7 @@ push → 适配器校验 token+解析 payload → Jenkins buildWithParameters(GI
   一致性检查      python3 checks/consistency.py
   重新生成本文件  python3 gen_quick_deploy.py
 
-  › 仿真并发：numExecutors=1（串行，D-003）。admin 用户：admin。端口白名单：80-90/443/8080-8090。
+  › 仿真并发：numExecutors=4（总并行）；单仿真器由 throttle 类别限其 license（D-003）。admin：admin。端口白名单：80-90/443/8080-8090。
 
 
 ▶ 卸载 / 重置（停服务 + 清数据）
