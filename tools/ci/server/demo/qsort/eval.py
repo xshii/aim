@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# implements: FR-13, FR-6
+# implements: FR-13, FR-6, FR-7
 """qsort 评测 demo：两个 CI 项——功能(正确性) + 性能(耗时)。
 - 功能：编译 qsort.c → 跑 cases.txt 用例比对期望输出。
 - 性能：多规模随机数组跑，测 wall 耗时 + 校验结果仍正确（与 python sorted 比对）。

@@ -1,8 +1,10 @@
 [Unit]
-Description=CI webhook receiver + read-only UI
-After=network.target
+Description=CI webhook adapter (X-Devcloud-Token -> Jenkins buildWithParameters)
+After=network.target ci-jenkins.service
 
 [Service]
+# WEBHOOK_SECRET + JENKINS_ADMIN_PASSWORD 由 deploy.py 从 config.local.ini 写入，0600，不入仓（C-1）。
+EnvironmentFile=@@ENV_FILE@@
 ExecStart=/usr/bin/python3 @@CI_ROOT@@/server/webhook/receiver.py
 Restart=always
 RestartSec=3

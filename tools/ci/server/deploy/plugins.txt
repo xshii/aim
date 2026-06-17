@@ -1,0 +1,9 @@
+# Jenkins 插件清单（jenkins-plugin-manager 据此下载，依赖自动解析）。
+# 一行一个短名（不写版本=取与 war 兼容的最新版）。fetch_offline.sh 在有网机用它下离线插件。
+# 增删插件改这里，重跑 fetch_offline.sh 重打离线包。
+git                     # SCM：checkout 被测仓库
+workflow-aggregator     # Pipeline（pipeline-as-code，含 declarative）
+configuration-as-code   # JCasC：离线可复现声明式配置（admin/job/串行/MCP）
+job-dsl                 # JCasC 用 job-dsl 建 qsort pipeline job
+throttle-concurrents    # 串行类别（仿真 License=1，多节点时限并发；单节点由 numExecutors=1 兜底）
+mcp-server              # 官方 MCP：暴露 job/build 为 MCP tools，接 opencode

@@ -1,12 +1,14 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "_comment": "Jenkins 官方 mcp-server 插件提供 MCP 端点（D-016，无自写 MCP）。装上插件后 Jenkins 自带 job/build 工具。",
+  "_endpoint_note": "url 路径与认证以所装 mcp-server 插件版本文档为准；Authorization 用 admin + API token 的 Basic。",
   "mcp": {
-    "ci-control": {
-      "type": "local",
-      "command": ["python3", "tools/ci/local/mcp/ci_control_server.py"],
+    "jenkins": {
+      "type": "remote",
+      "url": "http://<jenkins-host>:8080/mcp-server/mcp",
       "enabled": true,
-      "environment": {
-        "CI_DB_PATH": "/opt/ci/var/ci.db"
+      "headers": {
+        "Authorization": "Basic <base64(admin:API_TOKEN)>"
       }
     }
   }

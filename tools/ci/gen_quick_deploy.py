@@ -75,34 +75,44 @@ def render(blocks, color):
 
 def build_blocks(cfg):
     g = lambda s, k, d="": ci_config.get(cfg, s, k, d)  # noqa: E731
-    listen = g("webhook", "listen", "0.0.0.0:8080")
-    port = listen.rsplit(":", 1)[-1]
-    conc = g("scheduler", "concurrency", "1")
-    git_auth = g("scheduler", "git_auth", "ssh")
-    wall = g("limits", "wall_sec", "120")
-    mcp_on = g("mcp", "enabled", "false").lower() == "true"
+    jport = g("jenkins", "http_port", "8080")
+    job = g("jenkins", "job_name", "qsort-eval")
+    admin = g("jenkins", "admin_user", "admin")
+    wport = g("webhook", "listen", "0.0.0.0:8090").rsplit(":", 1)[-1]
+    git_auth = g("webhook", "git_auth", "ssh")
+    deps = g("offline", "deps_dir", "/opt/ci/offline")
+    pkg = g("offline", "package", "jenkins-offline.tar.gz")
     rhost = g("remote", "host", "").strip() or "(未配置)"
     dest = g("remote", "dest", "/opt/ci").strip() or "/opt/ci"
 
     blocks = [
-        ("h1", "Quick Deploy · 自研 CI 调度器"),
+        ("h1", "Quick Deploy · Jenkins CI（离线）"),
         ("note", "自动生成（gen_quick_deploy.py 依据 config.ini），改配置后重跑。"),
-        ("note", "纯 python3 标准库调度器，替代 GitLab（D-013）："
-                 "webhook 入队 → 单 worker 串行 checkout+评测 → sqlite → MCP/网页查。"),
+        ("note", "CI 框架=Jenkins（D-016）：webhook 适配器校验 token → 调 Jenkins buildWithParameters；"
+                 "Jenkins(JCasC 离线) 跑 qsort 功能+性能评测；官方 MCP 插件接 opencode。代码托管仍用内网现有仓库。"),
 
         ("h2", "准备"),
         ("ol", [
-            "config.ini：[scheduler]（db/工作区/concurrency/git_auth）、[webhook] listen、[remote]（远端 bootstrap）。",
-            "config.local.ini（不入仓）：[secrets] webhook_secret；[scheduler] ssh_key 或 http_token（git checkout 用）。",
-            "代码托管用内网现有仓库（不新建）；仓库后台配 WebHook 指向本服务（见 C 段）。",
+            "有网机：跑 server/deploy/fetch_offline.py 产出离线包（jenkins.war+插件+JDK21，~350MB）。",
+            "config.ini：[jenkins]（端口/job/admin）、[webhook] listen、[offline] deps_dir、[remote]（远端 bootstrap）。",
+            "config.local.ini（不入仓）：[secrets] webhook_secret + jenkins_admin_password。",
+            "代码托管用内网现有仓库（不新建）；仓库后台配 WebHook 指向 webhook 适配器（见 C 段）。",
         ]),
 
         ("h2", "本期要点"),
         ("ul", [
-            "组件：webhook 接收器(+只读 UI) + 单 worker 串行调度 + sqlite 任务库 + MCP（接 opencode）。",
-            "仿真串行：concurrency=%s（单 worker 天然串行 = License 数）。" % conc,
-            "webhook 端口仅限 80-90 / 443 / 8080-8090；认证头 X-Devcloud-Token（平台固定，见 constants.py）。",
-            "纯标准库零依赖、内网离线；凭证不入仓（ssh_key/token/密钥经 config.local.ini）。git_auth=%s。" % git_auth,
+            "组件：webhook 适配器(触发) + Jenkins(JCasC 预配 job/串行/auto-cancel) + 官方 MCP 插件。",
+            "仿真串行：numExecutors=1（固定，D-003；单节点同一时刻仅 1 个构建 = License 数）。",
+            "Jenkins 端口 %s、webhook 端口 %s，均仅限 80-90 / 443 / 8080-8090；认证头 X-Devcloud-Token。" % (jport, wport),
+            "离线可复现：WAR+插件+JDK 离线传入；JCasC 配置即代码；凭证不入仓（密钥经 config.local.ini）。git_auth=%s。" % git_auth,
+        ]),
+
+        ("h2", "离线包获取（有网机，一次性）"),
+        ("steps", [
+            ("F1", "改 fetch_offline.py 顶部版本号为当前 LTS/发行版，下包+打包",
+             "python3 server/deploy/fetch_offline.py", "走代理：export HTTPS_PROXY=..."),
+            ("F2", "产出 jenkins-offline.tar.gz 放到 [offline] deps_dir=%s（或随 bootstrap 推送）" % deps,
+             None, None),
         ]),
 
         ("h2", "A. 首次远端 bootstrap（在执行机上，可选）"),
@@ -110,7 +120,7 @@ def build_blocks(cfg):
         ("steps", [
             ("A1", "admin 连通性自检（SSH / 远端 python3 / 管理员权限）",
              "python3 local/admin/deploy_remote.py check", None),
-            ("A2", "SSH/SCP 推代码到远端 %s（纯 python，无 .deb）" % dest,
+            ("A2", "SSH/SCP 推代码 + 离线包到远端 %s" % dest,
              "python3 local/admin/deploy_remote.py push", None),
             ("A3", "一条龙：check → push → 远程跑 deploy.py all",
              "python3 local/admin/deploy_remote.py all",
@@ -119,64 +129,62 @@ def build_blocks(cfg):
 
         ("h2", "B. 服务器本地部署（需 root）"),
         ("steps", [
-            ("1", "环境自检（python3 / git / systemctl / root / webhook 端口范围）",
+            ("1", "环境自检（root / git / systemctl / 端口范围 / 离线包就位）",
              "sudo python3 server/deploy/deploy.py check", None),
-            ("2", "初始化 sqlite + 工作区/日志目录",
+            ("2", "解离线包 + 放插件 + 渲染 JCasC 到 JENKINS_HOME",
              "sudo python3 server/deploy/deploy.py init", None),
-            ("3", "安装并启用 systemd 服务（ci-webhook + ci-worker）",
+            ("3", "写密钥环境文件 + 启用 systemd 服务（ci-jenkins + ci-webhook）",
              "sudo python3 server/deploy/deploy.py service", None),
         ]),
         ("note", "步骤 1-3 一条龙：sudo python3 server/deploy/deploy.py all。"),
 
         ("h2", "C. 接入内网代码仓 WebHook"),
         ("ol", [
-            "仓库后台 → WebHook → URL 填 http://<服务器IP>:%s/" % port,
+            "仓库后台 → WebHook → URL 填 http://<服务器IP>:%s/（webhook 适配器，非 Jenkins 端口）" % wport,
             "Token 填共享密钥（= config.local.ini [secrets] webhook_secret），平台据此发 X-Devcloud-Token 头。",
-            "订阅事件：Push Hook。push 即触发评测。",
+            "订阅事件：Push Hook。push 即触发 Jenkins job=%s 评测。" % job,
         ]),
 
         ("h2", "触发与查看结果"),
-        ("para", "push 代码 → 平台 POST webhook → 入队 → worker 串行 checkout+评测 → 存 sqlite。查看："),
+        ("para", "push → 适配器校验 token+解析 payload → Jenkins buildWithParameters(GIT_URL/GIT_SHA/BRANCH)。查看："),
         ("code", [
-            "浏览器:   http://<服务器IP>:%s/            # 任务列表/详情/日志（只读）" % port,
-            "命令行:   curl http://<服务器IP>:%s/tasks/<id>/log" % port,
-            "服务日志: journalctl -u ci-webhook -u ci-worker -f",
+            "Jenkins UI: http://<服务器IP>:%s/            # 构建列表/控制台日志/产物（admin 登录）" % jport,
+            "适配器日志: journalctl -u ci-webhook -f",
+            "Jenkins 日志: journalctl -u ci-jenkins -f",
         ]),
-    ]
 
-    if mcp_on:
-        blocks += [
-            ("h2", "开发端 MCP（接 opencode）查任务状态/日志"),
-            ("code", ["CI_DB_PATH=%s/var/ci.db python3 local/mcp/ci_control_server.py" % dest]),
-            ("note", "工具：get_task_status / list_tasks / get_task_log。"
-                     "opencode 接入见 local/mcp/opencode.json.example。"),
-        ]
+        ("h2", "开发端 MCP（官方 mcp-server 插件，接 opencode）"),
+        ("note", "Jenkins 装 mcp-server 插件后自带 MCP 端点，无需自写。opencode 接入见 local/mcp/opencode.json.example。"),
+        ("code", ["MCP 端点: http://<服务器IP>:%s/mcp-server/   # 用 admin + API token 认证" % jport]),
 
-    blocks += [
-        ("h2", "端到端 demo（验证链路）"),
-        ("code", ["python3 server/scheduler/smoke_scheduler.py   "
-                  "# 建临时仓 → 入队 → checkout → 编译 qsort+比对 → passed"]),
+        ("h2", "本机可验项（无需真 Jenkins）"),
+        ("code", [
+            "python3 server/demo/qsort/eval.py server/demo/qsort   # qsort 功能+性能评测",
+            "python3 server/webhook/test_receiver.py               # 适配器单测（mock Jenkins）",
+            "python3 checks/consistency.py                          # spec↔代码 一致性闸门",
+        ]),
 
         ("h2", "命令速查"),
         ("table", [
+            ("有网机下离线包", "python3 server/deploy/fetch_offline.py"),
             ("远端 bootstrap", "python3 local/admin/deploy_remote.py all"),
             ("服务器一键部署", "sudo python3 server/deploy/deploy.py all"),
             ("环境自检", "sudo python3 server/deploy/deploy.py check"),
-            ("看服务状态", "systemctl status ci-webhook ci-worker"),
-            ("看任务(网页)", "http://<host>:%s/" % port),
-            ("端到端 demo", "python3 server/scheduler/smoke_scheduler.py"),
+            ("看服务状态", "systemctl status ci-jenkins ci-webhook"),
+            ("Jenkins UI", "http://<host>:%s/" % jport),
             ("一致性检查", "python3 checks/consistency.py"),
             ("重新生成本文件", "python3 gen_quick_deploy.py"),
         ]),
-        ("note", "仿真并发：%s（单 worker 串行）。运行超时：%ss。webhook 端口白名单：80-90/443/8080-8090。"
-                 % (conc, wall)),
+        ("note", "仿真并发：numExecutors=1（串行，D-003）。admin 用户：%s。端口白名单：80-90/443/8080-8090。"
+                 % admin),
 
         ("h2", "卸载 / 重置（停服务 + 清数据）"),
         ("code", [
-            "sudo systemctl disable --now ci-webhook ci-worker",
-            "sudo rm -f /etc/systemd/system/ci-webhook.service /etc/systemd/system/ci-worker.service",
+            "sudo systemctl disable --now ci-jenkins ci-webhook",
+            "sudo rm -f /etc/systemd/system/ci-jenkins.service /etc/systemd/system/ci-webhook.service /etc/ci-jenkins.env",
             "sudo systemctl daemon-reload",
-            "rm -rf %s/var      # 删 sqlite/工作区/日志（谨慎，不可恢复）" % dest,
+            "sudo rm -rf %s %s/jenkins-offline   # 删 JENKINS_HOME + 解包（谨慎，不可恢复）"
+            % (g("jenkins", "home", "/opt/ci/jenkins_home"), dest),
         ]),
     ]
     return blocks

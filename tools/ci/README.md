@@ -1,95 +1,93 @@
 # tools/ci — CI 系统（Spec-Driven，精简版）
 
 AI 代码生成 Benchmark 评测仓库的 CI 系统。**CI 验证预生成的成品代码**（不在内部生成代码），
-做多种验证（运行/仿真/比对/质量检查）并收集 output 与状态。纯 python3（3.8 标准库、零依赖）、
-依赖离线传入。
+做多种验证（功能/性能/比对/质量检查）并收集 output 与状态。**CI 框架=Jenkins（D-016，离线部署）**；
+代码托管用内网现有仓库（不新建）。脚本纯 python3（3.8 标准库、零依赖），依赖离线传入。
 
 ## 执行角色（目录即角色）
-
-代码按**谁、在哪台机、何时执行**组织成两个顶层角色 + 共享层：
 
 ```
 tools/ci/
 ├── ci_config.py  config.ini  config.local.ini.example   ← 共享层（角色中立）
-├── checks/consistency.py  gen_quick_deploy.py  docs/  README.md
+├── checks/consistency.py  gen_quick_deploy.py  constants.py  docs/  README.md
 ├── server/                 ← 在 CI 服务器上执行
-│   ├── deploy/   deploy.py / probe_port.py / install_gitlab.py / features.md / gitlab.rb.example
-│   ├── runner/   setup_runner.py
-│   ├── harness/  limited_run.py / check.py
-│   ├── metrics/  report.py
-│   ├── webhook/  receiver.py / README.md
-│   ├── pipeline/ .gitlab-ci.yml
-│   └── demo/qsort/
+│   ├── deploy/   deploy.py / fetch_offline.py / plugins.txt / jenkins.yaml(JCasC) / systemd/
+│   ├── webhook/  receiver.py（→Jenkins 适配器） / test_receiver.py / README.md
+│   ├── harness/  limited_run.py（NFR-3：Jenkins eval stage 经它套超时+资源限制）
+│   └── demo/qsort/   qsort.c / cases.txt / eval.py（功能+性能，退出码即门禁）
 └── local/                  ← 在客户端 / 执行机上执行
     ├── admin/    deploy_remote.py / connectivity.py   （首次 SSH/SCP bootstrap）
-    └── mcp/      ci_control_server.py / opencode.json.example   （开发端查询，接 opencode）
+    └── mcp/      opencode.json.example   （指向 Jenkins 官方 mcp-server 插件）
 ```
 
 | 角色 | 谁/何时 | 入口 |
 |------|---------|------|
+| **有网机·一次性** | 产出 Jenkins 离线包（WAR+插件+JDK） | `python3 server/deploy/fetch_offline.py` |
 | **local/admin** | 客户端·首次，从执行机远端 bootstrap | `python3 local/admin/deploy_remote.py all` |
-| **server/deploy·runner** | 服务器·部署时手动安装 | `python3 server/deploy/deploy.py all` → `... runner` |
-| **server**·运行时 | GitLab/Runner 自动执行 | `.gitlab-ci.yml`（smoke→run→sim→compare→quality→report） |
-| **local/mcp** | 开发端·后续查询 | opencode 接入 `local/mcp/ci_control_server.py` |
+| **server/deploy** | 服务器·部署时（需 root） | `sudo python3 server/deploy/deploy.py all` |
+| **server·运行时** | Jenkins 自动执行评测 | JCasC 预配的 pipeline job（checkout → `python3 eval.py .`） |
+| **local/mcp** | 开发端·查询 | opencode 接 Jenkins `mcp-server` 插件 |
 
-## 部署两段式
+## 部署三段式
 
 详见 `docs/quick_deploy.md`（由 config.ini 自动生成，命令以它为准）。
 
+**0. 离线包（有网机，一次性）**
+```bash
+# 改 fetch_offline.py 顶部版本号为当前 LTS/发行版（见 docs/OFFLINE_DEPENDENCIES.md）
+python3 server/deploy/fetch_offline.py     # 产出 jenkins-offline.tar.gz（~350MB）
+```
+
 **A. 首次远端 bootstrap（在执行机上，新机首搭用）**
 ```bash
-# 填 config.ini [remote]（目标机 host/user/dest）与 config.local.ini [proxy]（如需代理下载）
-python3 local/admin/deploy_remote.py all   # 连通性自检 → 取依赖 → SSH/SCP 推送 → 远程跑 deploy.py
+# 填 config.ini [remote]（目标机 host/user/dest）；离线包放本地 [offline] deps_dir
+python3 local/admin/deploy_remote.py all   # 连通性自检 → SSH/SCP 推代码+离线包 → 远程跑 deploy.py
 ```
 
-**B. 服务器本地部署（代码到位后在服务器上）**
+**B. 服务器本地部署（代码+离线包到位后在服务器上，需 root）**
 ```bash
 cd /opt/ci
-# deploy.py 需 root：非 root 用户命令前加 sudo（脚本会自检拦截）；root 用户直接运行。
-sudo python3 server/deploy/deploy.py all   # 自检 → 锁 host/端口 → 装 GitLab(手输root密码) → 全自动注册 Runner
-# all 已含 Runner 全自动注册（gitlab-rails 建项目+签 token，GitLab 16+ 新流程）；
-# 单独重注册：sudo python3 server/deploy/deploy.py runner（可加 --token glrt- 手动 fallback）
+sudo python3 server/deploy/deploy.py all   # 自检 → 解包+放插件+渲染 JCasC → systemd(ci-jenkins+ci-webhook)
 ```
 
-## 离线依赖（手动 / 自动）
+## 离线依赖
 
-- **manual**：按 `docs/OFFLINE_DEPENDENCIES.md` 手动下载 .deb 放入 `deps_dir`。
-- **auto**：`config.ini [fetch] mode=auto` + 各包 URL，执行机经 `config.local.ini [proxy]` 代理
-  下载后随 bootstrap 推送到远端。**代理含明文密码，仅在 config.local.ini，不入仓**。
+见 `docs/OFFLINE_DEPENDENCIES.md`：有网机 `fetch_offline.py` 下 WAR+插件(含依赖)+JDK21 打包传入内网。
+插件清单在 `server/deploy/plugins.txt`。
 
 ## 触发构建
 
-- `git push` 自动触发；或 webhook / trigger token（HTTP 直连）→ 见 `server/webhook/README.md`。
-- **内源代码托管站**：经 `server/webhook/receiver.py`（校验 `X-Auth-Token` 共享密钥）→ 触发流水线。
-  密钥与 trigger token 经环境变量 / `config.local.ini [secrets]`，不入仓。
+- **内源代码托管站**：push → `server/webhook/receiver.py` 适配器（校验 `X-Devcloud-Token` 共享密钥）
+  → 调 Jenkins `buildWithParameters` 触发 job（GIT_URL/GIT_SHA/BRANCH）。见 `server/webhook/README.md`。
+- 密钥 / Jenkins admin 密码经 env / `config.local.ini [secrets]`，不入仓（C-1）。
 
 ## 查状态 / 拉日志（MCP，接 opencode）
 
-开发端用标准 MCP（stdio）`local/mcp/ci_control_server.py` 直连 GitLab API：
-`get_pipeline_status` / `list_pipelines` / `get_job_log`。opencode 接入见
-`local/mcp/opencode.json.example`；凭证用环境变量（`GITLAB_API/TOKEN/PROJECT`），不入仓。
+Jenkins 装官方 `mcp-server` 插件后自带 MCP 端点（job/build 工具），无需自写。opencode 接入见
+`local/mcp/opencode.json.example`。构建列表/控制台日志也可直接看 Jenkins UI。
 
-## qsort 冒烟 demo（端到端验证 CI 可用）
+## qsort 评测 demo（本机可验，无需 Jenkins）
 ```bash
-python3 server/demo/qsort/smoke_qsort.py   # 编译 → 限制运行 → 比对，期望 5/5 通过
+python3 server/demo/qsort/eval.py server/demo/qsort   # 编译 → 功能用例比对 + 性能耗时，期望全过
+python3 server/webhook/test_receiver.py               # 适配器单测（mock Jenkins）
 ```
-CI 流水线的 `smoke` 阶段会自动跑它。
+Jenkins pipeline 的评测 stage 即 `python3 eval.py .`（被测仓库根含 eval.py）。
 
 ## SDD 文档层级
 
 | 层 | 文件 | 回答 |
 |----|------|------|
 | 宪法 | `docs/00_constitution.md` | 不可违反的原则（C-1~C-10） |
-| 规格 | `docs/01_spec.md` | 是什么/为什么 + 需求(FR/NFR) + 决策记录(D-001~D-012) |
-| 计划 | `docs/02_plan.md` | 用什么方案/分阶段（P0~P5） |
-| 任务 | `docs/tasks/*.md` | 第几步敲什么 |
+| 规格 | `docs/01_spec.md` | 是什么/为什么 + 需求(FR/NFR) + 决策记录(D-001~D-018) |
+| 设计 | `docs/05_jenkins_design.md` | Jenkins 路线设计与实现阶段 |
 
 一致性由 `checks/consistency.py` 校验（spec 需求编号 ↔ 代码 `implements:` 双向对齐），接入 CI 闸门。
 
 ## 关键设计
 
-- **部署两段式**（D-008/D-010）：首次执行机 SSH/SCP bootstrap，之后服务器本地直跑；日常 HTTP 触发。
-- **CI 验证预生成代码**（D-005）：多种验证（合一为 `check.py <kind>`）；运行型仅超时+资源限制。
-- **仿真严格串行**（D-003）：resource_group + concurrent=1。
-- **凭证不入仓**（C-1/D-009）：私钥留 ~/.ssh；密钥/token/代理密码经 env 或 `config.local.ini`。
-- **纯 python3 标准库**：无第三方依赖；依赖离线传入（手动或经代理自动获取）。
+- **CI 框架 Jenkins**（D-016）：标准特性开箱（pipeline-as-code、auto-cancel、Web UI、官方 MCP 插件）；
+  离线部署（WAR+插件+JDK，JCasC 配置即代码 D-018）。自研调度器版留底 git tag `scheduler-v1`。
+- **webhook 适配器**（D-017）：内源 X-Devcloud-Token 头 + 复杂 payload，复用已验证校验/解析，解耦 Jenkins。
+- **仿真严格串行**（D-003）：Jenkins `numExecutors=1`（单节点同一时刻仅 1 个构建 = License 数）。
+- **凭证不入仓**（C-1/D-009）：私钥留 ~/.ssh；webhook 密钥/Jenkins admin 密码经 env 或 `config.local.ini`。
+- **纯 python3 标准库**：适配器/部署/取包脚本无第三方依赖；Jenkins 本体离线传入。

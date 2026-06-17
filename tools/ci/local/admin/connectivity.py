@@ -48,7 +48,7 @@ def remote_python(user, host, port, ssh_opts):
 def remote_admin(user, host, port, ssh_opts):
     """校验远端登录用户具备管理员权限。返回 'root' / 'sudo' / 'none'（或异常时空串）。
     'sudo' 含【免密 sudo】与【在 sudo/wheel/admin 组的需密码 sudo】——后者部署时经 sudo 交互输密码。
-    一键部署需 dpkg/gitlab-ctl 等特权，故在 push 前先校验，避免部署中途才失败（C-10）。"""
+    一键部署需 dpkg/systemctl 等特权，故在 push 前先校验，避免部署中途才失败（C-10）。"""
     check = ('if [ "$(id -u)" = 0 ]; then echo root; '
              'elif sudo -n true 2>/dev/null; then echo sudo; '
              "elif id -nG 2>/dev/null | tr ' ' '\\n' | grep -qxE 'sudo|wheel|admin'; then echo sudo; "

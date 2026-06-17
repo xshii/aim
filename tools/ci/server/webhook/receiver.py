@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 # implements: FR-14, FR-19
-"""webhook 接收器 + 极简只读 Web UI（role=server/webhook，python3 标准库）。同一受限端口：
-- POST /              ：X-Auth-Token 校验 → 解析 repo/ref → 入队 sqlite，返回 task id。
-- GET  /              ：HTML 任务列表（最近 50，状态上色）。
-- GET  /tasks/<id>    ：HTML 详情（状态表 + 完整日志，html.escape 防注入）。
-- GET  /tasks/<id>/log：纯文本日志（给 curl/脚本）。
-POST 必须 X-Auth-Token（防滥触发，密钥不入仓 C-1）；GET 内网只读放开（浏览器直接看）。
-监听端口受限 80-90/443/8080-8090，见 03 设计。"""
+"""webhook 适配器（role=server/webhook，python3 标准库）。CI 框架=Jenkins（D-016/D-017）。
+内源 push webhook → 校验 X-Devcloud-Token → 解析 payload → 调 Jenkins buildWithParameters 触发构建。
+- POST /：X-Devcloud-Token 常量时间校验 → 解析 (GIT_URL, GIT_SHA, BRANCH) → 触发 Jenkins job。
+- GET  /：极简健康页，指向 Jenkins UI（任务列表/日志看 Jenkins 自带 UI，不再自造）。
+幂等 / auto-cancel 交给 Jenkins job 的 disableConcurrentBuilds(abortPrevious)（D-017）。
+密钥不入仓（C-1）：WEBHOOK_SECRET、JENKINS_ADMIN_PASSWORD 经 env / config.local.ini 注入。
+监听端口受限 80-90/443/8080-8090（deploy.py check 校验）。"""
+import base64
 import hmac
-import html
+import http.cookiejar
 import json
 import os
 import sys
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -19,44 +22,63 @@ _R = HERE
 while _R != "/" and not os.path.isfile(os.path.join(_R, "ci_config.py")):
     _R = os.path.dirname(_R)
 sys.path.insert(0, _R)
-sys.path.insert(0, os.path.join(_R, "server", "scheduler"))
 import ci_config     # noqa: E402
 import constants as C  # noqa: E402
-import db             # noqa: E402
 
 _CFG = ci_config.load()
 AUTH_HEADER = C.AUTH_HEADER
-GIT_AUTH = ci_config.get(_CFG, "scheduler", "git_auth", "ssh")
+GIT_AUTH = ci_config.get(_CFG, "webhook", "git_auth", "ssh")
 SECRET = ci_config.secret("WEBHOOK_SECRET", _CFG, "secrets", "webhook_secret")
-DB_PATH = os.environ.get("CI_DB_PATH") or ci_config.expand(
-    ci_config.get(_CFG, "scheduler", "db_path", os.path.join(_R, "var/ci.db")))
-
-STYLE = ("<style>body{font-family:monospace;margin:2em}"
-         "table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 10px;text-align:left}"
-         ".passed{color:green}.failed{color:#c00}.error{color:#900}"
-         ".running{color:#e80}.queued{color:#888}"
-         "pre{background:#f4f4f4;padding:1em;overflow:auto;white-space:pre-wrap}</style>")
+JENKINS_PORT = ci_config.get(_CFG, "jenkins", "http_port", "8080")
+JENKINS_URL = "http://127.0.0.1:%s" % JENKINS_PORT          # 同机直连 Jenkins
+JOB = ci_config.get(_CFG, "jenkins", "job_name", "qsort-eval")
+JK_USER = ci_config.get(_CFG, "jenkins", "admin_user", "admin")
+JK_PASS = ci_config.secret("JENKINS_ADMIN_PASSWORD", _CFG, "secrets", "jenkins_admin_password")
 
 
 def _parse(body):
-    """从内部开源 push webhook payload 取 (repo, ref)。
-    repo：project.git_ssh_url（ssh）/ git_http_url（http），按 [scheduler] git_auth 选；
-    ref：checkout_sha（精确 commit）优先，否则 ref 剥 refs/heads|tags/ 前缀。
-    兼容裸 {repo,ref}（便于手测/curl）。"""
+    """从内部开源 push webhook payload 取 (repo, sha, branch)。
+    repo：project.git_ssh_url（ssh）/ git_http_url（http），按 [webhook] git_auth 选；
+    sha：checkout_sha（精确 commit，可空）；branch：ref 剥 refs/heads|tags/ 前缀（默认 main）。
+    兼容裸 {repo,sha,branch}（便于手测/curl）。"""
     d = json.loads(body or "{}")
     proj = d.get(C.F_PROJECT) or d.get(C.F_REPOSITORY) or {}
     repo = (proj.get(C.F_HTTP_URL if GIT_AUTH == "http" else C.F_SSH_URL, "")
             or d.get("repo", ""))
-    ref = d.get(C.F_CHECKOUT_SHA) or d.get(C.F_REF, "main")
+    sha = d.get(C.F_CHECKOUT_SHA, "") or d.get("sha", "")
+    branch = d.get(C.F_REF, "") or d.get("branch", "main")
     for pre in C.REF_PREFIXES:
-        if ref.startswith(pre):
-            ref = ref[len(pre):]
+        if branch.startswith(pre):
+            branch = branch[len(pre):]
             break
-    return repo, ref
+    return repo, sha, branch or "main"
 
 
-def _esc(v):
-    return html.escape("" if v is None else str(v))
+def _opener():
+    """带 cookie 的 opener：crumb 与构建请求共用同一会话（Jenkins crumb 绑会话）。"""
+    return urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+
+def trigger_build(repo, sha, branch, opener=None):
+    """调 Jenkins buildWithParameters 触发 job。返回 (status_code, detail)。
+    先取 CSRF crumb（同会话），再带 Basic Auth + crumb POST。crumb 取不到则不带（CSRF 关时）。"""
+    opener = opener or _opener()
+    auth = base64.b64encode(("%s:%s" % (JK_USER, JK_PASS)).encode()).decode()
+    headers = {"Authorization": "Basic %s" % auth}
+
+    try:
+        creq = urllib.request.Request(JENKINS_URL + "/crumbIssuer/api/json", headers=headers)
+        cj = json.loads(opener.open(creq, timeout=10).read().decode())
+        headers[cj["crumbRequestField"]] = cj["crumb"]
+    except Exception as e:  # noqa: BLE001  CSRF 关闭/旧版无 crumb：继续不带 crumb
+        print("[webhook] 无 crumb（CSRF 关？继续）：%s" % e, flush=True)
+
+    qs = urllib.parse.urlencode({"GIT_URL": repo, "GIT_SHA": sha, "BRANCH": branch})
+    url = "%s/job/%s/buildWithParameters?%s" % (JENKINS_URL, urllib.parse.quote(JOB), qs)
+    req = urllib.request.Request(url, data=b"", headers=headers, method="POST")
+    resp = opener.open(req, timeout=15)
+    return resp.status, resp.headers.get("Location", "")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -66,14 +88,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(msg.encode("utf-8"))
 
-    def _html(self, code, body):
-        self._reply(code, body, "text/html; charset=utf-8")
-
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(length).decode("utf-8") if length else ""
         authed = bool(SECRET) and hmac.compare_digest(self.headers.get(AUTH_HEADER, ""), SECRET)
-        # 打印收到的请求供确认（认证头脱敏，C-1）；生产看 journalctl -u ci-webhook。
         print("[webhook] POST %s  X-Devcloud-Event=%s  %s=%s  -> %s"
               % (self.path, self.headers.get(C.EVENT_HEADER, "-"), AUTH_HEADER,
                  "***" if self.headers.get(AUTH_HEADER) else "(缺)",
@@ -82,92 +100,37 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(401, "unauthorized\n")
         print("[webhook] body: %s" % (body[:2000] if body else "(空)"), flush=True)
         try:
-            repo, ref = _parse(body)
-            print("[webhook] 解析: repo=%s  ref=%s" % (repo, ref), flush=True)
+            repo, sha, branch = _parse(body)
+            print("[webhook] 解析: repo=%s sha=%s branch=%s" % (repo, sha, branch), flush=True)
             if not repo:
                 # 非 push 事件 / payload 无 repo：确认收到但忽略，避免平台无意义重试。
                 print("[webhook] 无 repo（非 push 事件？），忽略", flush=True)
                 return self._reply(200, "ignored: no repo\n")
-            existing = db.find_active(DB_PATH, repo, ref)
-            if existing:
-                # 幂等：同 commit 已有未完成任务，复用不重复入队（防重试堵队列）。
-                print("[webhook] 幂等命中，复用 task %d" % existing, flush=True)
-                return self._reply(200, "duplicate: task %d active\n" % existing)
-            tid = db.enqueue(DB_PATH, repo, ref)
-            print("[webhook] 入队: task %d" % tid, flush=True)
-            self._reply(202, "queued: task %d (GET /tasks/%d)\n" % (tid, tid))
+            status, loc = trigger_build(repo, sha, branch)
+            print("[webhook] 已触发 Jenkins %s job=%s -> HTTP %s %s"
+                  % (JENKINS_URL, JOB, status, loc), flush=True)
+            self._reply(202, "queued in Jenkins: job=%s (%s)\n" % (JOB, loc or "see Jenkins UI"))
         except Exception as e:  # noqa: BLE001
-            self._reply(500, "enqueue failed: %s\n" % e)
+            print("[webhook] 触发失败: %s" % e, flush=True)
+            self._reply(502, "trigger failed: %s\n" % e)
 
     def do_GET(self):
-        if self.path in ("/", "/ui"):
-            return self._list()
-        if self.path.startswith("/tasks/"):
-            rest = self.path[len("/tasks/"):]
-            return self._log(rest[:-4]) if rest.endswith("/log") else self._detail(rest)
-        return self._reply(404, "not found\n")
-
-    def _list(self):
-        trs = "".join(
-            "<tr><td><a href='/tasks/%(id)s'>%(id)s</a></td><td class='%(st)s'>%(st)s</td>"
-            "<td>%(repo)s</td><td>%(ref)s</td><td>%(t)s</td></tr>"
-            % {"id": r["id"], "st": _esc(r["state"]), "repo": _esc(r["repo"]),
-               "ref": _esc(r["ref"]), "t": _esc(r["created_at"])}
-            for r in db.list_tasks(DB_PATH, 50))
-        self._html(200,
-                   "<!doctype html><meta charset='utf-8'><title>CI 任务</title>%s"
-                   "<h2>CI 评测任务（最近 50）</h2><table>"
-                   "<tr><th>#</th><th>状态</th><th>repo</th><th>ref</th><th>创建</th></tr>"
-                   "%s</table>" % (STYLE, trs))
-
-    def _detail(self, id_str):
-        try:
-            tid = int(id_str)
-        except ValueError:
-            return self._reply(400, "bad task id\n")
-        row = db.get(DB_PATH, tid)
-        if not row:
-            return self._reply(404, "no such task\n")
-        log = ""
-        if row.get("log_path") and os.path.exists(row["log_path"]):
-            with open(row["log_path"], encoding="utf-8", errors="replace") as f:
-                log = f.read()
-        fields = "".join("<tr><th>%s</th><td>%s</td></tr>" % (k, _esc(row.get(k)))
-                         for k in ("id", "state", "repo", "ref", "exit_code",
-                                   "created_at", "started_at", "finished_at"))
-        self._html(200,
-                   "<!doctype html><meta charset='utf-8'><title>任务 %d</title>%s"
-                   "<p><a href='/'>&larr; 列表</a></p>"
-                   "<h2>任务 %d <span class='%s'>%s</span></h2><table>%s</table>"
-                   "<h3>日志</h3><pre>%s</pre>"
-                   % (tid, STYLE, tid, _esc(row["state"]), _esc(row["state"]),
-                      fields, _esc(log) or "（无日志）"))
-
-    def _log(self, id_str):
-        try:
-            tid = int(id_str)
-        except ValueError:
-            return self._reply(400, "bad task id\n")
-        row = db.get(DB_PATH, tid)
-        if not row or not row.get("log_path") or not os.path.exists(row["log_path"]):
-            return self._reply(404, "no log\n")
-        with open(row["log_path"], encoding="utf-8", errors="replace") as f:
-            self._reply(200, f.read())
+        self._reply(200,
+                    "<!doctype html><meta charset='utf-8'><title>CI webhook 适配器</title>"
+                    "<p>webhook 适配器在线。任务列表 / 构建日志请看 Jenkins UI："
+                    "<a href='http://%s:%s/'>Jenkins</a>（job: %s）。</p>"
+                    % (self.headers.get("Host", "<host>").split(":")[0], JENKINS_PORT, JOB),
+                    "text/html; charset=utf-8")
 
     def log_message(self, *a):
         pass
 
 
-def build_server(host, port):
-    db.init(DB_PATH)
-    return HTTPServer((host, int(port)), Handler)
-
-
 def main():
-    host, _, port = ci_config.get(_CFG, "webhook", "listen", "0.0.0.0:8080").partition(":")
-    httpd = build_server(host, int(port))
-    print("[webhook] 监听 %s:%s（POST 入队需 X-Auth；GET 网页/日志只读）db=%s"
-          % (host, port, DB_PATH))
+    host, _, port = ci_config.get(_CFG, "webhook", "listen", "0.0.0.0:8090").partition(":")
+    httpd = HTTPServer((host, int(port)), Handler)
+    print("[webhook] 适配器监听 %s:%s → Jenkins %s job=%s（POST 触发需 X-Devcloud-Token）"
+          % (host, port, JENKINS_URL, JOB))
     httpd.serve_forever()
 
 
