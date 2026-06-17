@@ -9,9 +9,9 @@
 
 ▶ 准备
 ────────────────────────────────────────────────────────────
-  1. 有网机：跑 server/deploy/fetch_offline.py 产出离线件到 tools/ci/offline/（jenkins_2.555.1_all.deb + 插件 + Java21 的 .deb）。
+  1. 有网机：跑 local/admin/fetch_offline.py 产出离线件到 tools/ci/local/offline/（jenkins_2.555.1_all.deb + plugin-cli jar + Java21 的 .deb）。
   2. config.ini 客户端：[fetch]（版本/URL）、[remote]（远端 bootstrap）。
-  3. config.ini 服务端：[jenkins]（端口/job/admin）、[offline] deps_dir、[webhook] listen、[limits]。
+  3. config.ini 服务端：[jenkins]（端口/job/admin/内源 UC）、[offline] deps_dir、[webhook] listen、[limits]。
   4. config.local.ini（不入仓）：[secrets] webhook_secret + jenkins_admin_password。
   5. 代码托管用内网现有仓库（不新建）；仓库后台配 WebHook 指向 webhook 适配器（见 C 段）。
 
@@ -21,16 +21,16 @@
   • 组件：webhook 适配器(触发) + Jenkins(.deb，JCasC 预配 job/串行/auto-cancel) + 官方 MCP 插件。
   • 仿真串行：numExecutors=1（固定，D-003；单节点同一时刻仅 1 个构建 = License 数）。
   • Jenkins 端口 8080、webhook 端口 8090，均仅限 80-90 / 443 / 8080-8090；认证头 X-Devcloud-Token。
-  • 离线：jenkins/java 的 .deb + 插件 离线传入，apt 安装；JCasC 配置即代码；凭证不入仓。git_auth=ssh。
+  • 离线：jenkins/java 的 .deb apt 安装；插件由服务器从内源 UC 装；JCasC 配置即代码；凭证不入仓。git_auth=ssh。
 
 
 ▶ 离线件获取（有网机，一次性）
 ────────────────────────────────────────────────────────────
-  F1  改 config.ini [fetch] 版本/URL 为内网可下版本，下 .deb+插件
-      python3 server/deploy/fetch_offline.py
+  F1  改 config.ini [fetch] 版本/URL 为内网可下版本，下 .deb + plugin-cli jar
+      python3 local/admin/fetch_offline.py
       ↳ 走代理：export HTTPS_PROXY=...
-  F2  Java：把 JDK/JRE 21 的 .deb 放进 tools/ci/offline/（[fetch] java_deb_url 为空时手动放）
-  F3  产出在 tools/ci/offline/（大文件已 .gitignore），随 bootstrap 推送或手动放到 deps_dir=/opt/ci/offline
+  F2  Java：把 JDK/JRE 21 的 .deb 放进 tools/ci/local/offline/（[fetch] java_deb_url 为空时手动放）
+  F3  产出在 tools/ci/local/offline/（大文件已 .gitignore），随 bootstrap 推送或手动放到 deps_dir=/opt/ci/local/offline
 
 
 ▶ A. 首次远端 bootstrap（在执行机上，可选）
@@ -50,7 +50,7 @@
 ────────────────────────────────────────────────────────────
   1   环境自检（root / apt-get / dpkg / 端口范围 / 离线 .deb 就位）
       sudo python3 server/deploy/deploy.py check
-  2   apt 装 jenkins/java 的 .deb + 放插件 + 渲染 JCasC
+  2   apt 装 jenkins/java 的 .deb + 从内源 UC 装插件 + 渲染 JCasC
       sudo python3 server/deploy/deploy.py init
   3   写密钥环境文件 + Jenkins systemd drop-in + 启用 jenkins/ci-webhook
       sudo python3 server/deploy/deploy.py service
@@ -90,7 +90,7 @@ push → 适配器校验 token+解析 payload → Jenkins buildWithParameters(GI
 
 ▶ 命令速查
 ────────────────────────────────────────────────────────────
-  有网机下离线包  python3 server/deploy/fetch_offline.py
+  有网机下离线件  python3 local/admin/fetch_offline.py
   远端 bootstrap  python3 local/admin/deploy_remote.py all
   服务器一键部署  sudo python3 server/deploy/deploy.py all
   环境自检        sudo python3 server/deploy/deploy.py check

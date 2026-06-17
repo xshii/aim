@@ -1,5 +1,0 @@
-# 离线大文件（Jenkins .deb / 插件 / JDK / *.tar.gz 等），勿入仓（C-1 精神：仓库只放代码+占位）。
-# 仅保留本目录占位，内容物全部忽略。fetch_offline.py 默认产出到这里。
-*
-!.gitignore
-!.gitkeep

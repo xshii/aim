@@ -80,7 +80,7 @@ def build_blocks(cfg):
     admin = g("jenkins", "admin_user", "admin")
     wport = g("webhook", "listen", "0.0.0.0:8090").rsplit(":", 1)[-1]
     git_auth = g("webhook", "git_auth", "ssh")
-    deps = g("offline", "deps_dir", "/opt/ci/offline")
+    deps = g("offline", "deps_dir", "/opt/ci/local/offline")
     jdeb = g("fetch", "jenkins_deb", "jenkins_2.555.1_all.deb")
     rhost = g("remote", "host", "").strip() or "(未配置)"
     dest = g("remote", "dest", "/opt/ci").strip() or "/opt/ci"
@@ -93,9 +93,9 @@ def build_blocks(cfg):
 
         ("h2", "准备"),
         ("ol", [
-            "有网机：跑 server/deploy/fetch_offline.py 产出离线件到 tools/ci/offline/（%s + 插件 + Java21 的 .deb）。" % jdeb,
+            "有网机：跑 local/admin/fetch_offline.py 产出离线件到 tools/ci/local/offline/（%s + plugin-cli jar + Java21 的 .deb）。" % jdeb,
             "config.ini 客户端：[fetch]（版本/URL）、[remote]（远端 bootstrap）。",
-            "config.ini 服务端：[jenkins]（端口/job/admin）、[offline] deps_dir、[webhook] listen、[limits]。",
+            "config.ini 服务端：[jenkins]（端口/job/admin/内源 UC）、[offline] deps_dir、[webhook] listen、[limits]。",
             "config.local.ini（不入仓）：[secrets] webhook_secret + jenkins_admin_password。",
             "代码托管用内网现有仓库（不新建）；仓库后台配 WebHook 指向 webhook 适配器（见 C 段）。",
         ]),
@@ -105,16 +105,16 @@ def build_blocks(cfg):
             "组件：webhook 适配器(触发) + Jenkins(.deb，JCasC 预配 job/串行/auto-cancel) + 官方 MCP 插件。",
             "仿真串行：numExecutors=1（固定，D-003；单节点同一时刻仅 1 个构建 = License 数）。",
             "Jenkins 端口 %s、webhook 端口 %s，均仅限 80-90 / 443 / 8080-8090；认证头 X-Devcloud-Token。" % (jport, wport),
-            "离线：jenkins/java 的 .deb + 插件 离线传入，apt 安装；JCasC 配置即代码；凭证不入仓。git_auth=%s。" % git_auth,
+            "离线：jenkins/java 的 .deb apt 安装；插件由服务器从内源 UC 装；JCasC 配置即代码；凭证不入仓。git_auth=%s。" % git_auth,
         ]),
 
         ("h2", "离线件获取（有网机，一次性）"),
         ("steps", [
-            ("F1", "改 config.ini [fetch] 版本/URL 为内网可下版本，下 .deb+插件",
-             "python3 server/deploy/fetch_offline.py", "走代理：export HTTPS_PROXY=..."),
-            ("F2", "Java：把 JDK/JRE 21 的 .deb 放进 tools/ci/offline/（[fetch] java_deb_url 为空时手动放）",
+            ("F1", "改 config.ini [fetch] 版本/URL 为内网可下版本，下 .deb + plugin-cli jar",
+             "python3 local/admin/fetch_offline.py", "走代理：export HTTPS_PROXY=..."),
+            ("F2", "Java：把 JDK/JRE 21 的 .deb 放进 tools/ci/local/offline/（[fetch] java_deb_url 为空时手动放）",
              None, None),
-            ("F3", "产出在 tools/ci/offline/（大文件已 .gitignore），随 bootstrap 推送或手动放到 deps_dir=%s" % deps,
+            ("F3", "产出在 tools/ci/local/offline/（大文件已 .gitignore），随 bootstrap 推送或手动放到 deps_dir=%s" % deps,
              None, None),
         ]),
 
@@ -134,7 +134,7 @@ def build_blocks(cfg):
         ("steps", [
             ("1", "环境自检（root / apt-get / dpkg / 端口范围 / 离线 .deb 就位）",
              "sudo python3 server/deploy/deploy.py check", None),
-            ("2", "apt 装 jenkins/java 的 .deb + 放插件 + 渲染 JCasC",
+            ("2", "apt 装 jenkins/java 的 .deb + 从内源 UC 装插件 + 渲染 JCasC",
              "sudo python3 server/deploy/deploy.py init", None),
             ("3", "写密钥环境文件 + Jenkins systemd drop-in + 启用 jenkins/ci-webhook",
              "sudo python3 server/deploy/deploy.py service", None),
@@ -169,7 +169,7 @@ def build_blocks(cfg):
 
         ("h2", "命令速查"),
         ("table", [
-            ("有网机下离线包", "python3 server/deploy/fetch_offline.py"),
+            ("有网机下离线件", "python3 local/admin/fetch_offline.py"),
             ("远端 bootstrap", "python3 local/admin/deploy_remote.py all"),
             ("服务器一键部署", "sudo python3 server/deploy/deploy.py all"),
             ("环境自检", "sudo python3 server/deploy/deploy.py check"),
