@@ -20,8 +20,10 @@ import urllib.request
 # ↓↓↓ 版本号：下包前到官网核对当前 LTS / 当前发行版，改这里（装错版本是硬故障，勿臆造）↓↓↓
 # 注意：Jenkins 2.555.x 要求 Java 21+，已不支持 Java 17——JDK 必须 21。
 JENKINS_VERSION = "2.555.1"        # 内网可下载的 LTS 版本；2.555.x 要求 Java 21+（已不支持 Java 17）
-JDK_TAG = "jdk-21.0.7+6"           # 确认: https://github.com/adoptium/temurin21-binaries/releases （tag）
-JDK_FILE = "21.0.7_6"              # 同上 release 里 OpenJDK21U-jdk_x64_linux_hotspot_<这里>.tar.gz
+JDK_TAG = "jdk-21.0.6+7"           # 确认: https://github.com/adoptium/temurin21-binaries/releases （tag）
+JDK_FILE = "21.0.6_7"              # 同上 release 里 OpenJDK21U-jdk_x64_linux_hotspot_<这里>.tar.gz
+# 注：跑 Jenkins 控制器用 JRE 21 也够（本流水线编 C + 跑 python，不编译 Java）；
+# 若用服务器已装的 JRE/JDK 21，置 config.ini [jenkins] java_home 指向它即可，免下载。
 PM_VERSION = "2.13.2"              # 确认: https://github.com/jenkinsci/plugin-installation-manager-tool/releases
 # ↑↑↑ 改完上面四个再跑 ↑↑↑
 # ============================================================
