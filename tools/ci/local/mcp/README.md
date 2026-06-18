@@ -7,7 +7,7 @@
 
 1. **装插件**：`mcp-server` 在 `server/deploy/plugins.txt` 里（连同其它插件全离线——内网 Update Center 装不了）。
    有网机跑 `local/admin/fetch_plugins.py`（跨平台，Windows 装 python3+java 也能跑）从公网下它 + 全部依赖到 `local/offline/plugins/`，
-   `deploy.py` 部署时拷进 `/var/lib/jenkins/plugins`。装上即自动暴露端点，无需 JCasC、无需额外配置。
+   到服务器后手动拷进 `/var/lib/jenkins/plugins`（见根 README 部署 ③）。装上即自动暴露端点，无需 JCasC、无需额外配置。
 2. **生成 API token**：部署后在 Jenkins UI → 头像（右上）→ Security → API Token → 生成，命名（如 `opencode-mcp`），
    **复制一次存好**（只显示一次）。MCP 认证用它，不用密码。
 
@@ -23,8 +23,8 @@
 **认证**：用 Jenkins 同一套凭证——HTTP Basic，头 `Authorization: Basic <base64(用户名:API_TOKEN)>`。
 
 **（可选）生产调优**：Jenkins 启动加 `--httpKeepAliveTimeout=600000`（SSE 长连接更稳）。
-要加就改 `server/deploy/systemd/jenkins-override.conf` 的 `ExecStart`，在 `--httpPort=...` 后追加该参数，
-重跑 `deploy.py service`。不加也能用（仅影响 SSE 长连接稳定性）。
+要加就在 `jenkins.service` 的 drop-in 里给 `ExecStart` 的 `--httpPort=...` 后追加该参数，
+`sudo systemctl daemon-reload && sudo systemctl restart jenkins`。不加也能用（仅影响 SSE 长连接稳定性）。
 
 ## 客户端（opencode）
 

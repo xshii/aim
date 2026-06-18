@@ -17,5 +17,5 @@ no_proxy = .corp,localhost,127.0.0.1
 
 [secrets]
 # Jenkins admin 密码：JCasC 建 admin 用户用（等效 env JENKINS_ADMIN_PASSWORD）。
-# 部署时 deploy.py 写入 systemd EnvironmentFile（0600）。
+# gen_jenkins_yaml.py 只校验它已配置（不写进 yaml，C-1）；运行时经 env 或 systemd EnvironmentFile 注入 Jenkins。
 jenkins_admin_password = change-me

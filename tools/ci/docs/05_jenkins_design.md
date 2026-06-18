@@ -5,13 +5,15 @@
 > 自研版留底：git tag `scheduler-v1`（`git checkout scheduler-v1` 可恢复）。
 >
 > **后续精简（手动拷贝交付）**：删 SSH bootstrap（`deploy_remote.py`/`connectivity.py`）、urllib 取包
-> （`fetch_offline.py`）、doc 生成器（`gen_quick_deploy.py`）、一致性闸门（`consistency.py`）；插件改
-> `fetch_plugins.py` 用 curl + 公网 `update-center.json` 解依赖、sha256 校验、闭包自检、打 `tar.gz`，
-> 经介质/手动拷到服务器（D-019）。
+> （`fetch_offline.py`）、doc 生成器（`gen_quick_deploy.py`）、一致性闸门（`consistency.py`）、打包推送
+> （`packship.py`）；插件改 `fetch_plugins.py` 用 curl + 公网 `update-center.json` 解依赖、sha256 校验、闭包自检、
+> 打 `tar.gz`，经介质/手动拷到服务器（D-019）。
+> **再再后续（D-008 改版）**：删一体化 `deploy.py`，部署拆成手动三步——`install.sh` 装离线 `.deb`、手动拷插件、
+> `gen_jenkins_yaml.py` 渲染 JCasC（必填校验）→ UI/systemd 加载；运维脚本 `restart_jenkins.sh`/`showlog.sh`。
 > **再后续（D-020）**：触发改用内网自研【分支源插件】+ 组织文件夹（Jenkins 内直接发现/触发，流水线随各仓
 > `Jenkinsfile`，加项目零重启），**删自研 webhook 适配器 `receiver.py` 整套**。下文 §3 架构图、§4.1/§4.3 的
 > webhook 适配器描述、§4.4 内联 pipeline 均为**当时重构记录**，已被取代；当前交付/触发以
-> README / quick_deploy / 01_spec(D-019,D-020) 为准。
+> README / 01_spec(D-008,D-019,D-020) 为准。
 
 ## 1. 背景与动机
 
@@ -62,8 +64,8 @@
 ### 4.1 离线部署 `server/deploy/`
 - **离线件获取**（有网机器，一次性）：jenkins/Java21 的 `.deb` 手动下；`fetch_plugins.py` 用 curl + 公网 `update-center.json` 据 `plugins.txt` 解整棵依赖树、下全部插件 + 依赖（sha256 校验 + MANIFEST 闭包自检），打 `jenkins-plugins.tar.gz`。产出到 `tools/ci/local/offline/`。
 - **插件清单**见 `plugins.txt`（核心 git/pipeline/JCasC/job-dsl/throttle，另含凭证/清理/UI/邮件等）；fetch_plugins.py 递归解依赖一并下。
-- **部署** `deploy.py`（在内网服务器，需 root）：`apt-get install ./offline/*.deb`（jenkins+java 一起，apt 解依赖）、把离线插件 `.jpi` 拷进 `/var/lib/jenkins/plugins`、渲染 JCasC `jenkins.yaml`、写 systemd drop-in 覆盖 deb 自带的 `jenkins.service`（端口/JCasC/admin 密码）、启用。webhook 适配器同机起 `ci-webhook.service`。
-- 端口：Jenkins 与 webhook 适配器端口仍受白名单约束（80-90/443/8080-8090），`deploy.py check` 校验。
+- **部署**（在内网服务器，需 root，手动三步）：① `install.sh` apt 装离线 `.deb`（jenkins+java，apt 解依赖）；② 手动把插件 `.hpi` 拷进 `/var/lib/jenkins/plugins`；③ `gen_jenkins_yaml.py` 渲染 JCasC → `jenkins.rendered.yaml`，经 UI「Configuration as Code → Apply」或拷到 `/var/lib/jenkins/jenkins.yaml`（+ systemd `CASC_JENKINS_CONFIG`）加载。systemd 沿用 deb 自带 `jenkins.service`，按需手写 drop-in。
+- 端口：Jenkins 端口受白名单约束（80-90/443/8080-8090），`gen_jenkins_yaml.py` 校验。
 
 ### 4.2 JCasC 配置 `server/deploy/jenkins.yaml`
 Configuration-as-Code 声明式预配（离线可复现，免手动点 UI）：admin 用户、跳过 setup wizard、qsort job(内联 pipeline)、numExecutors(总并行)、throttle 仿真并发类别（每仿真器一个）。

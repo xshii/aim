@@ -24,3 +24,6 @@ __pycache__/
 /artifacts/
 /reports/
 qsort_eval.json
+
+# gen_jenkins_yaml.py 渲染产物（含 config 值，可重生成）
+server/deploy/jenkins.rendered.yaml

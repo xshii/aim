@@ -1,10 +1,11 @@
 # implements: FR-3
 # Jenkins Configuration-as-Code（JCasC）模板（D-018：配置即代码，离线可复现）。
-# deploy.py 把 @@占位@@ 用 config.ini 的值填好后落到 JENKINS_HOME/jenkins.yaml，
-# 经 systemd 环境变量 CASC_JENKINS_CONFIG 加载。改配置 → 改 config.ini → 重跑 deploy.py（C-7）。
+# gen_jenkins_yaml.py 把 @@占位@@ 用 config.ini 的值填好 → server/deploy/jenkins.rendered.yaml；
+# 拷到 /var/lib/jenkins/jenkins.yaml 或经 UI「Configuration as Code → Apply」/ CASC_JENKINS_CONFIG 加载。
+# 改配置 → 改 config.ini → 重跑 gen_jenkins_yaml.py（C-7）。
 #
-# 密码不入仓（C-1）：${JENKINS_ADMIN_PASSWORD} 由 Jenkins 启动时从 systemd EnvironmentFile 读取，
-# deploy.py 从 config.local.ini [secrets] 写入该 EnvironmentFile（0600），仓库里只有变量名。
+# 密码不入仓（C-1）：${JENKINS_ADMIN_PASSWORD} 由 Jenkins 启动时从环境读取（systemd EnvironmentFile 或 env），
+# 仓库里只有变量名；gen 只校验密码已配置、不写进 yaml。
 jenkins:
   systemMessage: "AI Benchmark CI · Jenkins(offline, JCasC) · 仿真按 throttle 类别限并发(D-003)"
   # numExecutors = 总并行构建数（来自 config.ini [jenkins] executors）。不同仿真器可并行故 >1；

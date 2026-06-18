@@ -221,7 +221,7 @@ def main():
         print("[tar] 打包完成 → %s（%.1f MB）" % (tar, os.path.getsize(tar) / 1e6))
 
     print("\n完成：%d 个 .hpi → %s（依赖闭包自检已通过）" % (len(items), out))
-    print("  上线：tar.gz 拷进内网解包到 /var/lib/jenkins/plugins（或随 offline/ 走 deploy.py）。")
+    print("  上线：tar.gz 随 offline/ 拷进内网解包，插件 .hpi 手动拷到 /var/lib/jenkins/plugins。")
 
 
 if __name__ == "__main__":
