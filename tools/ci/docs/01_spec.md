@@ -380,8 +380,8 @@ Jenkins MCP 端点（见 `local/mcp/opencode.json.example`）；凭证用 admin 
 **D-019 离线交付：curl 取插件 + 手动下 .deb + 介质拷贝**：下载机（纯外网）与 Jenkins 服务器（内网隔离）
 分属两网、不可 SSH 直达，故不用 SSH 推送；urllib / java plugin-cli 在受限网络下慢且难配代理，故不用。
 `fetch_plugins.py` 用 curl + 公网 `update-center.json` 纯 Python 解整棵依赖树、sha256 校验、读 `.hpi` MANIFEST
-做闭包自检、打 `jenkins-plugins.tar.gz`；jenkins/java 的 `.deb` 手动下；经介质/手动（或 `packship.py` 在可直连时
-scp）拷到服务器本地部署。下载代理在 `config.ini [proxy]`（含密码的放 `config.local.ini`，C-1）。
+做闭包自检、打 `jenkins-plugins.tar.gz`；jenkins/java 的 `.deb` 手动下；手动 `tar` 打包、经介质拷到服务器本地
+部署。下载代理在 `config.ini [proxy]`（含密码的放 `config.local.ini`，C-1）。
 
 **D-020 触发：自研分支源插件 + 组织文件夹**：用内网自研 Jenkins【分支源插件】（类 gitlab-branch-source，能枚举
 仓/分支）+ `organizationFolder`，在 Jenkins 内直接扫内源 git、发现带 `Jenkinsfile` 的仓/分支并建 job/触发——

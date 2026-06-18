@@ -15,7 +15,7 @@ tools/ci/
 │   ├── harness/  limited_run.py（NFR-3：eval/仿真经它套超时+资源限制）
 │   └── demo/qsort/   qsort.c / cases.txt / eval.py（功能+性能，退出码即门禁）
 └── local/                  ← 在有网机上执行
-    ├── admin/    fetch_plugins.py（curl 下插件+依赖、sha256 校验、闭包自检、打 tar.gz）/ packship.py（打包+scp 送到服务器）
+    ├── admin/    fetch_plugins.py（curl 下插件+依赖、sha256 校验、闭包自检、打 tar.gz）
     ├── offline/  离线件暂存（jenkins/java .deb + plugins/*.hpi + tar.gz；大文件 .gitignore，仅占位入仓）
     └── mcp/      opencode.json.example   （指向 Jenkins 官方 mcp-server 插件）
 ```
@@ -32,7 +32,7 @@ tools/ci/
 交付模型：**有网机下载 → 介质/手动拷贝 → 服务器本地部署**（无 SSH、无联网下载）。三步：
 
 1. **有网机**：`python3 local/admin/fetch_plugins.py`（curl 下插件+依赖打 tar.gz）+ 手动下 jenkins/java 的 `.deb` → `local/offline/`；走代理填 `config.ini [proxy]`。
-2. **送进服务器**：`python3 local/admin/packship.py`（据 `config.ini [ship]` 打包+scp，或 `--dir` 直传；不能直连则只打包、人肉搬介质）。
+2. **送进服务器**（手动）：`tar czf ci-bundle.tar.gz --exclude='*.local.ini' --exclude='__pycache__' ci` → 介质拷到服务器 → `tar xzf ci-bundle.tar.gz -C /opt`（得 `/opt/ci`）。
 3. **服务器**（root）：`sudo python3 server/deploy/deploy.py all`（apt 装 .deb + 拷插件 + JCasC + systemd）。
 
 离线件清单、插件机制、放置后验证、平台注意，全在 `docs/quick_deploy.md`。
