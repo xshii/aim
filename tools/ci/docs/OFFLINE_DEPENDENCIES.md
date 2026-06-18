@@ -32,6 +32,7 @@ python3 local/admin/fetch_plugins.py     # 据 plugins.txt 从公网下全部插
 - plugin-cli **递归解析整棵依赖树**（依赖的依赖…全下），手动下 `.jpi` 才会漏依赖；
 - 清单见 `server/deploy/plugins.txt`（核心 git/pipeline/JCasC/job-dsl/throttle，另含凭证/清理/时间戳/超时/BlueOcean/邮件/MCP 等）；
 - 也可命令行指定：`python3 local/admin/fetch_plugins.py mcp-server git`；
+- **预览不下载**：`python3 local/admin/fetch_plugins.py --dry-run`——解析整棵依赖树、打印会下载的全部插件+官方下载链接，但不下载（默认真实下载）；
 - **公网机是 Windows**：`fetch_plugins.py` 跨平台（纯标准库 + java），装 python3 + java 后 `python local\admin\fetch_plugins.py` 即可；
 - 产出 `.jpi` 随 `offline/` 推到服务器，`deploy.py` 拷进 `/var/lib/jenkins/plugins`（jenkins 默认插件路径）。
 - 验证下全：Jenkins 启动日志若报 `Failed to load: X (missing dependency Y)` 即缺依赖；不报即闭包完整。
