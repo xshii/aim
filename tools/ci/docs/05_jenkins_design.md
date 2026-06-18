@@ -52,7 +52,7 @@
 
 ### 4.1 离线部署 `server/deploy/`
 - **离线件获取**（有网机器，一次性）：`fetch_offline.py` 下 jenkins/Java21 的 `.deb`；`fetch_plugins.py` 据 `plugins.txt` 从**公网**下全部插件 + 依赖（plugin-cli 递归解依赖、不漏）。都产出到 `tools/ci/local/offline/`。
-- **插件清单** `plugins.txt`：`git`、`workflow-aggregator`(pipeline)、`configuration-as-code`(JCasC)、`job-dsl`(建 job)、`throttle-concurrents`(仿真并发类别)、`mcp-server`(MCP) 及其依赖（工具自动解）。
+- **插件清单**见 `plugins.txt`（核心 git/pipeline/JCasC/job-dsl/throttle，另含凭证/清理/UI/邮件等）；fetch_plugins.py 递归解依赖一并下。
 - **部署** `deploy.py`（在内网服务器，需 root）：`apt-get install ./offline/*.deb`（jenkins+java 一起，apt 解依赖）、把离线插件 `.jpi` 拷进 `/var/lib/jenkins/plugins`、渲染 JCasC `jenkins.yaml`、写 systemd drop-in 覆盖 deb 自带的 `jenkins.service`（端口/JCasC/admin 密码）、启用。webhook 适配器同机起 `ci-webhook.service`。
 - 端口：Jenkins 与 webhook 适配器端口仍受白名单约束（80-90/443/8080-8090），`deploy.py check` 校验。
 

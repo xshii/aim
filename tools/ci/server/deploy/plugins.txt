@@ -2,8 +2,14 @@
 # deploy.py 部署时把 .jpi 拷进 Jenkins 默认插件路径 /var/lib/jenkins/plugins（内网 Update Center 装不了，故全离线）。
 # 一行一个短名（不写版本=取与 jenkins 版本兼容的最新版）。行内 # 注释 fetch_plugins.py 会自动剥。
 git                     # SCM：checkout 被测仓库
+credentials-binding     # 流水线 withCredentials 绑凭证（checkout 私有仓库的 SSH key/token、调外部密钥）
 workflow-aggregator     # Pipeline（pipeline-as-code，含 declarative）
 configuration-as-code   # JCasC：离线可复现声明式配置（admin/job/并发）
 job-dsl                 # JCasC 用 job-dsl 建 qsort pipeline job
 throttle-concurrents    # 仿真并发类别（每仿真器一个，限各自 license）；JCasC 定义 + 仿真 job throttle 引用
+ws-cleanup              # cleanWs()：构建前/后清工作区
+timestamper             # 控制台日志每行加时间戳
+build-timeout           # 构建超时自动中止（防卡死，和 limited_run 互补）
+blueocean               # 现代化流水线 UI（可视化 stage/日志；较重，会带不少依赖）
+email-ext               # 邮件扩展：构建结果富文本邮件通知（可配触发条件/模板/收件人）
 mcp-server              # 官方 MCP：暴露 job/build 为 MCP tools，接 opencode（可选，不要可删）

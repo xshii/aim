@@ -30,7 +30,7 @@ python3 local/admin/fetch_plugins.py     # 据 plugins.txt 从公网下全部插
 插件库）用 `jenkins-plugin-manager`（plugin-cli）按 `server/deploy/plugins.txt` 下插件：
 
 - plugin-cli **递归解析整棵依赖树**（依赖的依赖…全下），手动下 `.jpi` 才会漏依赖；
-- 清单 `server/deploy/plugins.txt`：`git`/`workflow-aggregator`/`configuration-as-code`/`job-dsl`/`throttle-concurrents`/`mcp-server`；
+- 清单见 `server/deploy/plugins.txt`（核心 git/pipeline/JCasC/job-dsl/throttle，另含凭证/清理/时间戳/超时/BlueOcean/邮件/MCP 等）；
 - 也可命令行指定：`python3 local/admin/fetch_plugins.py mcp-server git`；
 - **公网机是 Windows**：`fetch_plugins.py` 跨平台（纯标准库 + java），装 python3 + java 后 `python local\admin\fetch_plugins.py` 即可；
 - 产出 `.jpi` 随 `offline/` 推到服务器，`deploy.py` 拷进 `/var/lib/jenkins/plugins`（jenkins 默认插件路径）。
